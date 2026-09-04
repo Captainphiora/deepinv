@@ -202,6 +202,8 @@ box inpainting 的 PSNR 在论文中未报告，以“—”保留；不能当�
 
 官方脚本先对 uint8 图像卷积，再转换到 `[0,1]`。这会引入与“先转 float 再卷积”不同的量化行为。算法对齐阶段应把原始仓库生成的 `ground_truth`、`kernel`、`clean_measurement`、`measurement_noise` 和最终 `measurement` 冻结为 `.pt`，两边读取同一 tensor；算子实现正确性再单独测试。
 
+DeepInv `BlurFFT.prox_l2` 与官方 FFT data solution 在数学上是同一个闭式解，但默认采用更稳定的化简计算式。官方代码在 float32 下使用“先相减、再除以 `rho`”的计算顺序；DiffPIR 早期 `rho` 极小时，两种求值顺序会出现可观的中间轨迹差异。为了认证原实现，DeepInv reproduction runner 使用纯 Torch 保留官方求值顺序；采样公式、目标函数和退化算子均未改变，也没有用 NumPy 重写算法。
+
 ### 8.2 Gaussian kernel：论文与 demo 不一致
 
 论文基准明确写 `61×61, std=3.0`。但固定 commit 的 `main_ddpir_deblur.py` 和 `main_ddpir.py` 实际执行：
