@@ -55,7 +55,10 @@ class HarnessTest(unittest.TestCase):
         self.assertAlmostEqual(delta["mae"], 0.1, places=6)
         self.assertAlmostEqual(delta["rmse"], 0.1, places=6)
         self.assertAlmostEqual(delta["max_abs"], 0.1, places=6)
-        self.assertAlmostEqual(image_metrics(expected, expected)["ssim"], 1.0)
+        metrics = image_metrics(expected, expected)
+        self.assertAlmostEqual(metrics["ssim"], 1.0)
+        self.assertIs(type(metrics["psnr_db"]), float)
+        self.assertIs(type(metrics["ssim"]), float)
 
 
 if __name__ == "__main__":

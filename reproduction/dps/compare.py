@@ -47,11 +47,13 @@ def image_metrics(
     )
     target_np = target_raw.add(1).div(2).squeeze(0).permute(1, 2, 0).cpu().numpy()
     result = {
-        "psnr_db": peak_signal_noise_ratio(
-            target_np, reconstruction_np, data_range=1.0
+        "psnr_db": float(
+            peak_signal_noise_ratio(target_np, reconstruction_np, data_range=1.0)
         ),
-        "ssim": structural_similarity(
-            target_np, reconstruction_np, data_range=1.0, channel_axis=-1
+        "ssim": float(
+            structural_similarity(
+                target_np, reconstruction_np, data_range=1.0, channel_axis=-1
+            )
         ),
     }
     if lpips_metric is not None:
