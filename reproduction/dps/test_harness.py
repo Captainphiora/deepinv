@@ -7,12 +7,13 @@ import torch
 from _common import (
     load_record,
     load_tensors,
+    read_json,
     requires_transition_noise,
     save_tensors,
     tensor_dict_sha256,
     update_run_manifest,
 )
-from compare import differences, image_metrics
+from compare import alignment_environment, differences, image_metrics
 
 
 class HarnessTest(unittest.TestCase):
@@ -77,14 +78,48 @@ class HarnessTest(unittest.TestCase):
                 record={},
                 **arguments,
             )
+            update_run_manifest(
+                path,
+                fixture_manifest_sha256="fixture-sha",
+                implementation="deepinv",
+                record={},
+                **arguments,
+            )
+            self.assertEqual(
+                set(read_json(path)["implementations"]), {"reference", "deepinv"}
+            )
             with self.assertRaises(ValueError):
                 update_run_manifest(
                     path,
                     fixture_manifest_sha256="changed",
-                    implementation="deepinv",
+                    implementation="other",
                     record={},
                     **arguments,
                 )
+
+    def test_alignment_environment_ignores_gpu_location(self):
+        first = {
+            "torch": "test",
+            "device": "cuda:0",
+            "gpu": {
+                "name": "same-model",
+                "compute_capability": [12, 0],
+                "uuid": "gpu-0",
+            },
+        }
+        second = {
+            **first,
+            "device": "cuda:3",
+            "gpu": {**first["gpu"], "uuid": "gpu-3"},
+        }
+        self.assertEqual(
+            alignment_environment(first), alignment_environment(second)
+        )
+
+        second["gpu"]["name"] = "different-model"
+        self.assertNotEqual(
+            alignment_environment(first), alignment_environment(second)
+        )
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import platform
 import random
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -146,6 +147,7 @@ def environment(device: str) -> dict:
         uuid = getattr(properties, "uuid", None)
         gpu = {
             "name": properties.name,
+            "compute_capability": [properties.major, properties.minor],
             "uuid": str(uuid) if uuid is not None else None,
         }
     return {
@@ -296,32 +298,46 @@ def update_run_manifest(
     record: dict,
 ) -> None:
     path = Path(path)
-    manifest = (
-        read_json(path)
-        if path.exists()
-        else {
-            "schema_version": 1,
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock = path.with_suffix(path.suffix + ".lock")
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            lock.mkdir()
+            break
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"timed out waiting for manifest lock: {lock}")
+            time.sleep(0.05)
+    try:
+        manifest = (
+            read_json(path)
+            if path.exists()
+            else {
+                "schema_version": 1,
+                "setting_id": setting_id,
+                "setting_sha256": setting_sha256,
+                "fixture_id": fixture_id,
+                "fixture_manifest_sha256": fixture_manifest_sha256,
+                "run_id": run_id,
+                "implementations": {},
+            }
+        )
+        for key, expected in {
             "setting_id": setting_id,
             "setting_sha256": setting_sha256,
             "fixture_id": fixture_id,
             "fixture_manifest_sha256": fixture_manifest_sha256,
             "run_id": run_id,
-            "implementations": {},
-        }
-    )
-    for key, expected in {
-        "setting_id": setting_id,
-        "setting_sha256": setting_sha256,
-        "fixture_id": fixture_id,
-        "fixture_manifest_sha256": fixture_manifest_sha256,
-        "run_id": run_id,
-    }.items():
-        if manifest.get(key) != expected:
-            raise ValueError(f"run manifest {key} mismatch")
-    if implementation in manifest["implementations"]:
-        raise FileExistsError(
-            f"run manifest already contains implementation {implementation}"
-        )
-    manifest["updated_at"] = utc_now()
-    manifest["implementations"][implementation] = record
-    write_json(path, manifest)
+        }.items():
+            if manifest.get(key) != expected:
+                raise ValueError(f"run manifest {key} mismatch")
+        if implementation in manifest["implementations"]:
+            raise FileExistsError(
+                f"run manifest already contains implementation {implementation}"
+            )
+        manifest["updated_at"] = utc_now()
+        manifest["implementations"][implementation] = record
+        write_json(path, manifest)
+    finally:
+        lock.rmdir()

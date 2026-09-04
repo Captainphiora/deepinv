@@ -37,7 +37,8 @@ numerical inputs.
 
 ## Run and compare
 
-Use the same fixture, run ID, environment, and GPU for both implementations:
+Use the same fixture, run ID, software environment, and GPU model for both
+implementations. Physical GPU UUIDs may differ and are recorded as provenance:
 
 ```bash
 python reproduction/dsg/run_reference.py \

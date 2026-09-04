@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "status": "PASS",
   "setting": {
     "id": "ffhq256_inpainting_ddim100_eta0_v1",
@@ -39,11 +39,42 @@
     "delta_ssim": 0.0,
     "delta_lpips": 0.0
   },
-  "case": {
-    "id": "00002",
-    "psnr_db": 6.943074630972655,
-    "ssim": 0.002376159653067589,
-    "lpips": 0.7675279378890991
+  "cases": [
+    {
+      "id": "00002",
+      "reference": {
+        "psnr_db": 6.943074630972655,
+        "ssim": 0.002376159653067589,
+        "lpips": 0.7675279378890991
+      },
+      "deepinv": {
+        "psnr_db": 6.943074630972655,
+        "ssim": 0.002376159653067589,
+        "lpips": 0.7675279378890991
+      },
+      "delta": {
+        "psnr_db": 0.0,
+        "ssim": 0.0,
+        "lpips": 0.0
+      }
+    }
+  ],
+  "mean": {
+    "reference": {
+      "psnr_db": 6.943074630972655,
+      "ssim": 0.002376159653067589,
+      "lpips": 0.7675279378890991
+    },
+    "deepinv": {
+      "psnr_db": 6.943074630972655,
+      "ssim": 0.002376159653067589,
+      "lpips": 0.7675279378890991
+    },
+    "delta": {
+      "psnr_db": 0.0,
+      "ssim": 0.0,
+      "lpips": 0.0
+    }
   },
   "artifacts": {
     "run_manifest": "reproduction/artifacts/runs/dps/ffhq256_inpainting_ddim100_eta0_v1/ddim100-xinit43-case00002-v1/manifest.json",

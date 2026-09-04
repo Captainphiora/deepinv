@@ -14,6 +14,9 @@ Every reproduction follows the same order:
 4. Compare raw tensors and selected trajectory steps before image metrics.
 5. Commit a compact certification JSON only after all configured gates pass.
 
+The complete Chinese handoff and field reference is
+[`ALIGNMENT_WORKFLOW.zh-CN.md`](ALIGNMENT_WORKFLOW.zh-CN.md).
+
 Canonical numerical artifacts are `dict[str, torch.Tensor]` `.pt` files. Load
 them with `weights_only=True` and `map_location="cpu"`. Configuration,
 provenance, hashes, and metrics are JSON. PNG files may be generated for human

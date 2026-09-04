@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "status": "PASS",
   "setting": {
     "id": "ffhq256_inpainting_ddim100_eta1_dsg_v1",
@@ -25,6 +25,7 @@
     "cudnn": "92400",
     "device": "cuda:0",
     "gpu_name": "NVIDIA GeForce RTX 5090",
+    "gpu_compute_capability": [12, 0],
     "gpu_uuid": "35b6d422-f208-9c92-b9ee-80cca9a9211d",
     "deterministic_algorithms": true,
     "allow_tf32": false
@@ -43,27 +44,75 @@
   "cases": [
     {
       "id": "00000",
-      "psnr_db": 36.98387502798004,
-      "ssim": 0.9620132446289062,
-      "lpips": 0.09253563731908798
+      "reference": {
+        "psnr_db": 36.98387502798004,
+        "ssim": 0.9620132446289062,
+        "lpips": 0.09253563731908798
+      },
+      "deepinv": {
+        "psnr_db": 36.98387502798004,
+        "ssim": 0.9620132446289062,
+        "lpips": 0.09253563731908798
+      },
+      "delta": {
+        "psnr_db": 0.0,
+        "ssim": 0.0,
+        "lpips": 0.0
+      }
     },
     {
       "id": "00001",
-      "psnr_db": 34.47608452274852,
-      "ssim": 0.9330904483795166,
-      "lpips": 0.10067655146121979
+      "reference": {
+        "psnr_db": 34.47608452274852,
+        "ssim": 0.9330904483795166,
+        "lpips": 0.10067655146121979
+      },
+      "deepinv": {
+        "psnr_db": 34.47608452274852,
+        "ssim": 0.9330904483795166,
+        "lpips": 0.10067655146121979
+      },
+      "delta": {
+        "psnr_db": 0.0,
+        "ssim": 0.0,
+        "lpips": 0.0
+      }
     },
     {
       "id": "00002",
-      "psnr_db": 34.55576577861764,
-      "ssim": 0.9470646381378174,
-      "lpips": 0.1124674528837204
+      "reference": {
+        "psnr_db": 34.55576577861764,
+        "ssim": 0.9470646381378174,
+        "lpips": 0.1124674528837204
+      },
+      "deepinv": {
+        "psnr_db": 34.55576577861764,
+        "ssim": 0.9470646381378174,
+        "lpips": 0.1124674528837204
+      },
+      "delta": {
+        "psnr_db": 0.0,
+        "ssim": 0.0,
+        "lpips": 0.0
+      }
     }
   ],
   "mean": {
-    "psnr_db": 35.33857510978207,
-    "ssim": 0.9473894437154134,
-    "lpips": 0.10189321388800938
+    "reference": {
+      "psnr_db": 35.33857510978207,
+      "ssim": 0.9473894437154134,
+      "lpips": 0.10189321388800938
+    },
+    "deepinv": {
+      "psnr_db": 35.33857510978207,
+      "ssim": 0.9473894437154134,
+      "lpips": 0.10189321388800938
+    },
+    "delta": {
+      "psnr_db": 0.0,
+      "ssim": 0.0,
+      "lpips": 0.0
+    }
   },
   "artifacts": {
     "run_manifest": "reproduction/artifacts/runs/dsg/ffhq256_inpainting_ddim100_eta1_dsg_v1/ddim100-official-fixed-v1/manifest.json",

@@ -79,7 +79,8 @@ The generated tensor, not the seed alone, is the comparison input. Use
 
 ## Run and compare
 
-Use the same `run-id` for both implementations. The reference runner imports
+Use the same `run-id`, software environment, and GPU model for both
+implementations; physical GPU UUIDs may differ. The reference runner imports
 the original modules rather than copying their formulas. It permits a newer
 checkout only when `guided_diffusion/` is byte-equivalent to pinned commit
 `effbde7325b22ce8dc3e2c06c160c021e743a12d`.

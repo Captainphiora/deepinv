@@ -35,6 +35,17 @@ def differences(actual: torch.Tensor, expected: torch.Tensor) -> dict[str, float
     }
 
 
+def alignment_environment(value: dict) -> dict:
+    """Remove GPU location while retaining the numerical execution environment."""
+    normalized = dict(value)
+    device = normalized.pop("device", None)
+    normalized["device_type"] = torch.device(device).type if device else None
+    if normalized.get("gpu") is not None:
+        normalized["gpu"] = dict(normalized["gpu"])
+        normalized["gpu"].pop("uuid", None)
+    return normalized
+
+
 def image_metrics(
     reconstruction: torch.Tensor, target: torch.Tensor, lpips_metric=None
 ) -> dict[str, float]:
@@ -117,10 +128,20 @@ def main() -> None:
     implementations = run_manifest.get("implementations", {})
     reference_environment = implementations.get("reference", {}).get("environment")
     deepinv_environment = implementations.get("deepinv", {}).get("environment")
-    if not reference_environment or reference_environment != deepinv_environment:
+    if (
+        not reference_environment
+        or not deepinv_environment
+        or alignment_environment(reference_environment)
+        != alignment_environment(deepinv_environment)
+    ):
         raise ValueError(
-            "reference and DeepInv must run in the same environment and on the same device"
+            "reference and DeepInv must use the same software environment and GPU model"
         )
+    reference_checkpoint = implementations["reference"].get("checkpoint_sha256")
+    if not reference_checkpoint or reference_checkpoint != implementations[
+        "deepinv"
+    ].get("checkpoint_sha256"):
+        raise ValueError("reference and DeepInv used different checkpoints")
 
     import lpips
 
