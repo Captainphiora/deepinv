@@ -47,6 +47,33 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def official_diffpir_deblur_prox(
+    z: torch.Tensor,
+    y: torch.Tensor,
+    kernel: torch.Tensor,
+    gamma: float | torch.Tensor,
+) -> torch.Tensor:
+    """Torch port of DiffPIR's float32 FFT evaluation order for scale 1."""
+    rho = torch.as_tensor(1 / gamma, dtype=z.dtype, device=z.device)
+    rho = rho[(...,) + (None,) * (z.ndim - rho.ndim)]
+    psf = torch.zeros(kernel.shape[:-2] + z.shape[-2:], dtype=z.dtype, device=z.device)
+    kernel = kernel.to(dtype=z.dtype, device=z.device)
+    psf[..., : kernel.shape[-2], : kernel.shape[-1]].copy_(kernel)
+    psf = torch.roll(
+        psf,
+        shifts=(-(kernel.shape[-2] // 2), -(kernel.shape[-1] // 2)),
+        dims=(-2, -1),
+    )
+    transfer = torch.fft.fftn(psf, dim=(-2, -1))
+    transfer_conj = transfer.conj()
+    transfer_sq = transfer.abs().square()
+    residual = transfer_conj * torch.fft.fftn(y, dim=(-2, -1))
+    residual = residual + torch.fft.fftn(rho * z, dim=(-2, -1))
+    inverse = transfer * residual / (transfer_sq + rho)
+    solution = (residual - transfer_conj * inverse) / rho
+    return torch.fft.ifftn(solution, dim=(-2, -1)).real
+
+
 def build_algorithm(
     setting: dict, checkpoint: Path, schedule: dict, device: torch.device
 ):
@@ -206,7 +233,12 @@ def main() -> None:
                 device=device,
             )
         elif task["name"] == "gaussian_deblur":
-            physics = dinv.physics.BlurFFT(
+
+            class OfficialDiffPIRBlurFFT(dinv.physics.BlurFFT):
+                def prox_l2(self, z, y, gamma, **kwargs):
+                    return official_diffpir_deblur_prox(z, y, self.filter, gamma)
+
+            physics = OfficialDiffPIRBlurFFT(
                 img_size=tuple(initial_state.shape[1:]),
                 filter=tensors["kernel"].to(device),
                 device=device,

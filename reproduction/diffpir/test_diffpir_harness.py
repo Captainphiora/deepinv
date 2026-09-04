@@ -12,6 +12,9 @@ if str(REPO_ROOT) not in sys.path:
 import deepinv as dinv  # noqa: E402
 from prepare_inputs import official_gaussian_kernel, official_random_mask  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from run_deepinv import official_diffpir_deblur_prox  # noqa: E402
+
 
 class ZeroEpsilon(torch.nn.Module):
     def predict(self, x, condition, **kwargs):
@@ -42,6 +45,8 @@ class DiffPIRAlignmentTest(unittest.TestCase):
             dim=(-2, -1),
         ).real
         self.assertTrue(torch.allclose(actual, expected, atol=2e-6, rtol=2e-6))
+        official_order = official_diffpir_deblur_prox(x, y, kernel, gamma=1 / rho)
+        self.assertTrue(torch.allclose(official_order, expected, atol=2e-6, rtol=2e-6))
 
     def test_official_mask_and_closed_form_step(self):
         np.random.seed(42)
