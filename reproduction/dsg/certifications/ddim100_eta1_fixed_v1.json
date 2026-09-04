@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "status": "PASS",
+  "setting": {
+    "id": "ffhq256_inpainting_ddim100_eta1_dsg_v1",
+    "sha256": "6cc2ae9ee620dd394b5bbb5ff58d009263969f0ce404706e4675dbca2d2bd329"
+  },
+  "fixture": {
+    "id": "ffhq256_inpainting_ddim100_eta1_dsg_v1",
+    "manifest_sha256": "5f47c27c60a203ba0ac5d39c64178c12fa0bf3e6797bf9fb692ad26c312c9a8a"
+  },
+  "run_id": "ddim100-official-fixed-v1",
+  "implementations": {
+    "reference_revision": "99b4e99c57886226fc852218286d951d65edab5e",
+    "upstream_algorithm_revision": "b217c7a2463f9ebd68e12fe6b6d91344f195d1b8",
+    "deepinv_revision": "6c6e6729dea4674de9ae73969348d3b9ecb06aa8",
+    "comparison_revision": "6c6e6729dea4674de9ae73969348d3b9ecb06aa8",
+    "checkpoint_sha256": "81d535743156ec6be34d8668e6920da94f0614074d7793a16c8fa9e306237faa"
+  },
+  "environment": {
+    "python": "3.10.20",
+    "torch": "2.14.0+cu130",
+    "numpy": "2.2.6",
+    "cuda": "13.0",
+    "cudnn": "92400",
+    "device": "cuda:0",
+    "gpu_name": "NVIDIA GeForce RTX 5090",
+    "gpu_uuid": "35b6d422-f208-9c92-b9ee-80cca9a9211d",
+    "deterministic_algorithms": true,
+    "allow_tf32": false
+  },
+  "alignment": {
+    "timesteps_equal": true,
+    "noise_levels_equal": true,
+    "max_final_mae": 0.0,
+    "max_final_abs": 0.0,
+    "max_trajectory_mae": 0.0,
+    "max_trajectory_relative_l2": 0.0,
+    "max_delta_psnr_db": 0.0,
+    "max_delta_ssim": 0.0,
+    "max_delta_lpips": 0.0
+  },
+  "cases": [
+    {
+      "id": "00000",
+      "psnr_db": 36.98387502798004,
+      "ssim": 0.9620132446289062,
+      "lpips": 0.09253563731908798
+    },
+    {
+      "id": "00001",
+      "psnr_db": 34.47608452274852,
+      "ssim": 0.9330904483795166,
+      "lpips": 0.10067655146121979
+    },
+    {
+      "id": "00002",
+      "psnr_db": 34.55576577861764,
+      "ssim": 0.9470646381378174,
+      "lpips": 0.1124674528837204
+    }
+  ],
+  "mean": {
+    "psnr_db": 35.33857510978207,
+    "ssim": 0.9473894437154134,
+    "lpips": 0.10189321388800938
+  },
+  "artifacts": {
+    "run_manifest": "reproduction/artifacts/runs/dsg/ffhq256_inpainting_ddim100_eta1_dsg_v1/ddim100-official-fixed-v1/manifest.json",
+    "run_manifest_sha256": "09320853fb5e407dbc4fcf1e721bfe0d187a3d925c87f0eca4bcb590ec95ca61",
+    "comparison": "reproduction/artifacts/runs/dsg/ffhq256_inpainting_ddim100_eta1_dsg_v1/ddim100-official-fixed-v1/comparison.json",
+    "comparison_sha256": "3eecbf7edeadf2fa4f9b0fcff074d9ad0ea961e2a434c5bcb5504c33c01bc2e5"
+  }
+}

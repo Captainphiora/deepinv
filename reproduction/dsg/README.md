@@ -64,3 +64,6 @@ one saved `randn_like` value into each `p_sample`, omits only the unused
 integer timestep map, explicit noise levels, and selected reverse-loop states.
 They live under `reproduction/artifacts/runs/dsg/`; the shared comparison
 script checks raw errors before PSNR, SSIM, and LPIPS.
+
+Passed compact reports are tracked in [`certifications/`](certifications/);
+the full tensor artifacts remain ignored and are verified by their hashes.
