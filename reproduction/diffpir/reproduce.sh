@@ -8,7 +8,8 @@ fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PYTHON="${ROOT}/.venv/bin/python"
-SETTING="${ROOT}/reproduction/diffpir/settings/ffhq256_inpainting_diffpir_quad20_v1.json"
+SETTING_ID="ffhq256_inpainting_diffpir_quad20_v1"
+SETTING="${ROOT}/reproduction/diffpir/settings/${SETTING_ID}.json"
 FIXTURE_ID="ffhq256_inpainting_diffpir_quad20_v1"
 ARTIFACT_ROOT="${ROOT}/reproduction/artifacts"
 REFERENCE_REPO="/mnt/afs/L202500464/reference-worktrees/diffpir-2a9898"
@@ -54,3 +55,7 @@ fi
 "${PYTHON}" reproduction/dps/compare.py \
   --setting "${SETTING}" --fixture-id "${FIXTURE_ID}" --run-id "${RUN_ID}" \
   --metric-device "${METRIC_DEVICE}" --artifact-root "${ARTIFACT_ROOT}"
+
+"${PYTHON}" reproduction/visualize_inpainting.py \
+  --fixture-dir "${ARTIFACT_ROOT}/fixtures/${FIXTURE_ID}" \
+  --run-dir "${ARTIFACT_ROOT}/runs/diffpir/${SETTING_ID}/${RUN_ID}"

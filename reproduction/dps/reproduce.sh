@@ -8,7 +8,8 @@ fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PYTHON="${ROOT}/.venv/bin/python"
-SETTING="${ROOT}/reproduction/dps/settings/ffhq256_inpainting_ddim100_eta0_v1.json"
+SETTING_ID="ffhq256_inpainting_ddim100_eta0_v1"
+SETTING="${ROOT}/reproduction/dps/settings/${SETTING_ID}.json"
 FIXTURE_ID="ffhq256_inpainting_v1"
 ARTIFACT_ROOT="${ROOT}/reproduction/artifacts"
 REFERENCE_REPO="/mnt/afs/L202500464/diffusion-posterior-sampling"
@@ -46,3 +47,7 @@ fi
 "${PYTHON}" reproduction/dps/compare.py \
   --setting "${SETTING}" --fixture-id "${FIXTURE_ID}" --run-id "${RUN_ID}" \
   --metric-device "${METRIC_DEVICE}" --artifact-root "${ARTIFACT_ROOT}"
+
+"${PYTHON}" reproduction/visualize_inpainting.py \
+  --fixture-dir "${ARTIFACT_ROOT}/fixtures/${FIXTURE_ID}" \
+  --run-dir "${ARTIFACT_ROOT}/runs/dps/${SETTING_ID}/${RUN_ID}"

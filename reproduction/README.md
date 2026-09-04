@@ -52,5 +52,10 @@ Each completed algorithm also provides a parameterless, fully configured
 `reproduce.sh` for the canonical task. Run one directly from the repository
 root, for example `bash reproduction/diffpir/reproduce.sh`.
 
+The inpainting scripts finish by calling `visualize_inpainting.py` on the raw
+fixture and reconstruction `.pt` files. Each run receives a
+`visualization.png` containing the ground truth, measurement, mask, original
+repository result, DeepInv result, and per-image/mean PSNR and SSIM.
+
 See [`dps/README.md`](dps/README.md), [`dsg/README.md`](dsg/README.md), and
 [`diffpir/README.md`](diffpir/README.md) for concrete workflows.
