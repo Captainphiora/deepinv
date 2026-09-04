@@ -11,6 +11,7 @@ from deepinv.sampling import (
     DiffPIR,
     DPS,
     DiscreteDPS,
+    DSG,
     sampling_builder,
     DDRM,
     VarianceExplodingDiffusion,
@@ -363,6 +364,76 @@ def test_discrete_dps_fixed_inputs_noise_and_gradient():
     seeded_a = dps(y, physics, seed=7, transition_noise=tape)
     seeded_b = dps(y, physics, seed=7, transition_noise=tape)
     torch.testing.assert_close(seeded_a, seeded_b, rtol=0, atol=0)
+
+
+def test_dsg_one_step_formula():
+    guidance_scale = 0.25
+    model = _DiscretePrediction(epsilon=0.0, variance=1.0)
+    dsg = DSG(
+        model,
+        guidance_scale=guidance_scale,
+        interval=1,
+        sampler="ddpm",
+        betas=np.array([0.1, 0.2]),
+        timestep_respacing=2,
+        clip_denoised=False,
+    )
+    x = torch.tensor([[[[0.25, -0.4]]]], requires_grad=True)
+    y = torch.zeros_like(x)
+    noise = torch.tensor([[[[0.3, -0.5]]]])
+    out = dsg.p_sample(x, 1, noise=noise)
+
+    alpha_bar = 0.9 * 0.8
+    pred_xstart = x / np.sqrt(alpha_bar)
+    mean = (
+        0.2 * np.sqrt(0.9) / (1.0 - alpha_bar) * pred_xstart
+        + 0.1 * np.sqrt(0.8) / (1.0 - alpha_bar) * x
+    )
+    sigma_t = torch.full_like(x, np.sqrt(0.2))
+    sample = mean + sigma_t * noise
+    torch.testing.assert_close(out["mean"], mean)
+    torch.testing.assert_close(out["sigma_t"], sigma_t)
+    torch.testing.assert_close(out["sample"], sample)
+
+    eps = 1e-8
+    gradient = x / (torch.linalg.vector_norm(x) * np.sqrt(alpha_bar))
+    radius = np.sqrt(x[0].numel()) * sigma_t.flatten()[0]
+    target_direction = (
+        -radius
+        * gradient
+        / (torch.linalg.vector_norm(gradient, dim=(1, 2, 3), keepdim=True) + eps)
+    )
+    sample_direction = sample - mean
+    mixed_direction = sample_direction + guidance_scale * (
+        target_direction - sample_direction
+    )
+    expected = mean + radius * mixed_direction / (
+        torch.linalg.vector_norm(mixed_direction, dim=(1, 2, 3), keepdim=True) + eps
+    )
+    actual = dsg._condition_step(out, x, y, _IdentityPhysics(), step=1)
+    torch.testing.assert_close(actual, expected)
+
+
+def test_dsg_interval_skip():
+    dsg = DSG(
+        _DiscretePrediction(epsilon=0.0, variance=1.0),
+        interval=2,
+        betas=np.array([0.1, 0.2]),
+        timestep_respacing=2,
+    )
+    x = torch.tensor([[[[0.25, -0.4]]]], requires_grad=True)
+    out = dsg.p_sample(x, 1, noise=torch.ones_like(x))
+
+    assert (
+        dsg._condition_step(out, x, torch.zeros_like(x), _IdentityPhysics(), 1)
+        is out["sample"]
+    )
+
+
+@pytest.mark.parametrize("interval", [0, -1, 1.5, True])
+def test_dsg_invalid_interval(interval):
+    with pytest.raises(ValueError, match="positive integer"):
+        DSG(_DiscretePrediction(), interval=interval)
 
 
 # tests for sample_builder

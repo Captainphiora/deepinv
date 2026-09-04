@@ -848,9 +848,9 @@ class DiscreteDPS(Reconstructor):
         nonzero = (t != 0).to(x.dtype).view(-1, *([1] * (x.ndim - 1)))
 
         if self.sampler == "ddpm":
-            sample = out["mean"] + nonzero * torch.exp(
-                0.5 * out["log_variance"]
-            ) * noise
+            mean = out["mean"]
+            sigma_t = torch.exp(0.5 * out["log_variance"])
+            sample = mean + nonzero * sigma_t * noise
         else:
             alpha_bar = self._extract(self.alphas_cumprod, t, x)
             alpha_bar_prev = self._extract(self.alphas_cumprod_prev, t, x)
@@ -858,16 +858,28 @@ class DiscreteDPS(Reconstructor):
                 self._extract(self.sqrt_recip_alphas_cumprod, t, x) * x
                 - out["pred_xstart"]
             ) / self._extract(self.sqrt_recipm1_alphas_cumprod, t, x)
-            sigma = (
+            sigma_t = (
                 self.eta
                 * torch.sqrt((1.0 - alpha_bar_prev) / (1.0 - alpha_bar))
                 * torch.sqrt(1.0 - alpha_bar / alpha_bar_prev)
             )
             mean = torch.sqrt(alpha_bar_prev) * out["pred_xstart"]
-            mean = mean + torch.sqrt(1.0 - alpha_bar_prev - sigma**2) * epsilon
-            sample = mean + nonzero * sigma * noise
+            mean = mean + torch.sqrt(
+                1.0 - alpha_bar_prev - sigma_t**2
+            ) * epsilon
+            sample = mean + nonzero * sigma_t * noise
 
-        return {"sample": sample, "pred_xstart": out["pred_xstart"]}
+        return {
+            "mean": mean,
+            "sample": sample,
+            "sigma_t": sigma_t,
+            "pred_xstart": out["pred_xstart"],
+        }
+
+    def _condition_step(self, out, x_prev, y, physics, step):
+        distance = torch.linalg.vector_norm(y - physics.A(out["pred_xstart"]))
+        gradient = torch.autograd.grad(distance, x_prev)[0]
+        return out["sample"] - self.scale * gradient
 
     def _validate_transition_noise(self, transition_noise, x):
         if transition_noise is None:
@@ -931,14 +943,56 @@ class DiscreteDPS(Reconstructor):
             with torch.enable_grad():
                 x_prev = x.detach().requires_grad_(True)
                 out = self.p_sample(x_prev, t, noise=noise)
-                distance = torch.linalg.vector_norm(
-                    y - physics.A(out["pred_xstart"])
-                )
-                gradient = torch.autograd.grad(distance, x_prev)[0]
-                x = (out["sample"] - self.scale * gradient).detach()
+                x = self._condition_step(out, x_prev, y, physics, step).detach()
             if get_trajectory:
                 trajectory.append(x.clone())
 
         if get_trajectory:
             return x, torch.stack(trajectory)
         return x
+
+
+class DSG(DiscreteDPS):
+    r"""Diffusion with Spherical Gaussian constraint (DSG).
+
+    This reproduces the discrete DDPM/DDIM implementation from the original
+    DSG repository. At selected reverse steps, the sampled direction is mixed
+    with the normalized measurement-gradient direction and projected back onto
+    the transition sphere.
+
+    :param torch.nn.Module model: wrapped epsilon-prediction diffusion model.
+    :param float guidance_scale: mixing weight for the guidance direction.
+    :param int interval: apply DSG every ``interval`` reduced sampler steps.
+    :param kwargs: arguments forwarded to :class:`DiscreteDPS`.
+    """
+
+    def __init__(self, model, guidance_scale=1.0, interval=1, **kwargs):
+        if isinstance(interval, bool) or not isinstance(interval, int) or interval < 1:
+            raise ValueError("interval must be a positive integer")
+        super().__init__(model, **kwargs)
+        self.guidance_scale = float(guidance_scale)
+        self.interval = interval
+
+    def _condition_step(self, out, x_prev, y, physics, step):
+        if step % self.interval:
+            return out["sample"]
+
+        eps = 1e-8
+        distance = torch.linalg.vector_norm(y - physics.A(out["pred_xstart"]))
+        gradient = torch.autograd.grad(distance, x_prev)[0]
+        dimensions = tuple(range(1, gradient.ndim))
+        gradient_norm = torch.linalg.vector_norm(
+            gradient, dim=dimensions, keepdim=True
+        )
+
+        radius = torch.sqrt(torch.tensor(x_prev[0].numel()))
+        radius = radius * out["sigma_t"].reshape(-1)[0]
+        target_direction = -radius * gradient / (gradient_norm + eps)
+        sample_direction = out["sample"] - out["mean"]
+        mixed_direction = sample_direction + self.guidance_scale * (
+            target_direction - sample_direction
+        )
+        mixed_norm = torch.linalg.vector_norm(
+            mixed_direction, dim=dimensions, keepdim=True
+        )
+        return out["mean"] + mixed_direction / (mixed_norm + eps) * radius
