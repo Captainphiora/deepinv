@@ -10,7 +10,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import deepinv as dinv  # noqa: E402
-from prepare_inputs import official_random_mask  # noqa: E402
+from prepare_inputs import official_gaussian_kernel, official_random_mask  # noqa: E402
 
 
 class ZeroEpsilon(torch.nn.Module):
@@ -19,6 +19,30 @@ class ZeroEpsilon(torch.nn.Module):
 
 
 class DiffPIRAlignmentTest(unittest.TestCase):
+    def test_deblur_prox_matches_official_fft_closed_form(self):
+        torch.manual_seed(0)
+        kernel = official_gaussian_kernel(5, 1.0)
+        x = torch.rand(1, 1, 16, 16)
+        y = torch.rand_like(x)
+        rho = torch.tensor(0.3)
+
+        physics = dinv.physics.BlurFFT(img_size=(1, 16, 16), filter=kernel)
+        actual = dinv.optim.data_fidelity.L2().prox(x, y, physics, gamma=1 / rho)
+
+        psf = torch.zeros_like(x)
+        psf[..., :5, :5] = kernel
+        psf = torch.roll(psf, shifts=(-2, -2), dims=(-2, -1))
+        transfer = torch.fft.fftn(psf, dim=(-2, -1))
+        expected = torch.fft.ifftn(
+            (
+                transfer.conj() * torch.fft.fftn(y, dim=(-2, -1))
+                + rho * torch.fft.fftn(x, dim=(-2, -1))
+            )
+            / (transfer.abs().square() + rho),
+            dim=(-2, -1),
+        ).real
+        self.assertTrue(torch.allclose(actual, expected, atol=2e-6, rtol=2e-6))
+
     def test_official_mask_and_closed_form_step(self):
         np.random.seed(42)
         mask = official_random_mask(4, 0.5)
@@ -47,9 +71,7 @@ class DiffPIRAlignmentTest(unittest.TestCase):
         model_alpha = torch.cumprod(
             1 - torch.linspace(0.0001, 0.02, 1000, dtype=torch.float64), dim=0
         )
-        x0 = (
-            torch.rsqrt(model_alpha[-1]).to(initial.dtype) * initial
-        ).clamp(-1, 1)
+        x0 = (torch.rsqrt(model_alpha[-1]).to(initial.dtype) * initial).clamp(-1, 1)
         rho = algorithm.rhos[-1]
         x0_01 = x0 / 2 + 0.5
         prox = (mask * y + rho * x0_01) / (mask + rho)

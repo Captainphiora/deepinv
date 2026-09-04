@@ -37,9 +37,7 @@ from _common import (  # noqa: E402
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--setting", required=True)
-    parser.add_argument(
-        "--fixture-id", default="ffhq256_inpainting_diffpir_quad20_v1"
-    )
+    parser.add_argument("--fixture-id", default="ffhq256_inpainting_diffpir_quad20_v1")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--case", action="append")
@@ -61,7 +59,10 @@ def build_algorithm(
     score_model = dinv.models.DiffUNet(pretrained=None)
     incompatible = score_model.load_state_dict(state, strict=False)
     expected_missing = {"sqrt_1m_alphas_cumprod", "sqrt_alphas_cumprod"}
-    if set(incompatible.missing_keys) != expected_missing or incompatible.unexpected_keys:
+    if (
+        set(incompatible.missing_keys) != expected_missing
+        or incompatible.unexpected_keys
+    ):
         raise ValueError(
             f"checkpoint does not match DiffUNet: {incompatible.missing_keys}, "
             f"{incompatible.unexpected_keys}"
@@ -111,6 +112,8 @@ def main() -> None:
     fixture = fixture_dir(root, args.fixture_id)
     fixture_manifest_path = fixture / "manifest.json"
     fixture_manifest = read_json(fixture_manifest_path)
+    if fixture_manifest.get("source_setting_sha256") != file_sha256(setting_file):
+        raise ValueError("fixture was generated from a different setting JSON")
     cases = select_cases(fixture_manifest, args.case)
     destination = run_dir(root, setting["id"], args.run_id, "diffpir")
     revision = git_revision(REPO_ROOT)
@@ -179,23 +182,37 @@ def main() -> None:
         raise ValueError("DeepInv noise levels differ from the fixture")
 
     probes = setting["trajectory_probe_steps"]
+    task = setting["task"]
     case_records = []
     for case in cases:
         case_id = case["id"]
-        tensors = load_record(
-            fixture, case, required=("measurement", "mask", "x_init")
+        required = (
+            ("measurement", "mask", "x_init")
+            if task["name"] == "inpainting"
+            else ("measurement", "kernel", "x_init")
         )
+        tensors = load_record(fixture, case, required=required)
         y = tensors["measurement"].to(device)
-        mask = tensors["mask"].to(device)
         initial_state = tensors["x_init"].to(device)
         transition_noise = load_record(
             fixture,
             case["transition_noise"],
             required=("transition_noise",),
         )["transition_noise"]
-        physics = dinv.physics.Inpainting(
-            img_size=tuple(initial_state.shape[1:]), mask=mask, device=device
-        )
+        if task["name"] == "inpainting":
+            physics = dinv.physics.Inpainting(
+                img_size=tuple(initial_state.shape[1:]),
+                mask=tensors["mask"].to(device),
+                device=device,
+            )
+        elif task["name"] == "gaussian_deblur":
+            physics = dinv.physics.BlurFFT(
+                img_size=tuple(initial_state.shape[1:]),
+                filter=tensors["kernel"].to(device),
+                device=device,
+            )
+        else:
+            raise ValueError(f"unsupported DiffPIR task: {task['name']}")
         reconstruction, full_trajectory = algorithm(
             y,
             physics,

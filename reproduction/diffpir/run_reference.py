@@ -1,4 +1,4 @@
-"""Run the pinned official DiffPIR model and inpainting update."""
+"""Run the pinned official DiffPIR model and task update."""
 
 from __future__ import annotations
 
@@ -36,9 +36,7 @@ from _common import (  # noqa: E402
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--setting", required=True)
-    parser.add_argument(
-        "--fixture-id", default="ffhq256_inpainting_diffpir_quad20_v1"
-    )
+    parser.add_argument("--fixture-id", default="ffhq256_inpainting_diffpir_quad20_v1")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--reference-repo", required=True)
     parser.add_argument("--checkpoint", required=True)
@@ -49,17 +47,22 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def verify_reference(repo: Path, commit: str) -> str:
+def verify_reference(repo: Path, commit: str, task: str) -> str:
     actual = git_revision(repo)
     if actual != commit:
         raise RuntimeError(f"DiffPIR reference must be at {commit}; got {actual}")
-    paths = (
+    paths = [
         "guided_diffusion",
-        "main_ddpir.py",
         "utils/utils_model.py",
-        "utils/utils_inpaint.py",
-        "configs/inpaint.yaml",
-    )
+    ]
+    if task == "inpainting":
+        paths.extend(
+            ("main_ddpir.py", "utils/utils_inpaint.py", "configs/inpaint.yaml")
+        )
+    elif task == "gaussian_deblur":
+        paths.extend(("main_ddpir_deblur.py", "utils/utils_sisr.py"))
+    else:
+        raise ValueError(f"unsupported DiffPIR reference task: {task}")
     status = subprocess.run(
         ["git", "-C", str(repo), "status", "--porcelain", "--", *paths],
         check=True,
@@ -111,9 +114,10 @@ def main() -> None:
     setting_file, setting = load_setting(args.setting)
     if setting["algorithm"]["name"] != "diffpir":
         raise ValueError("DiffPIR runner requires algorithm.name='diffpir'")
+    task = setting["task"]
     repo = Path(args.reference_repo).resolve()
     checkpoint = Path(args.checkpoint).resolve()
-    revision = verify_reference(repo, setting["reference"]["commit"])
+    revision = verify_reference(repo, setting["reference"]["commit"], task["name"])
     checkpoint_hash = file_sha256(checkpoint)
     if checkpoint_hash != setting["model"]["checkpoint_sha256"]:
         raise ValueError("checkpoint SHA256 does not match the setting")
@@ -122,6 +126,8 @@ def main() -> None:
     fixture = fixture_dir(root, args.fixture_id)
     fixture_manifest_path = fixture / "manifest.json"
     fixture_manifest = read_json(fixture_manifest_path)
+    if fixture_manifest.get("source_setting_sha256") != file_sha256(setting_file):
+        raise ValueError("fixture was generated from a different setting JSON")
     cases = select_cases(fixture_manifest, args.case)
     destination = run_dir(root, setting["id"], args.run_id, "diffpir")
     if args.dry_run:
@@ -145,6 +151,9 @@ def main() -> None:
     configure_determinism(setting["randomness"]["fixture_seed"])
     device = torch.device(args.device)
     model, diffusion = build_model(repo, checkpoint, device)
+    if task["name"] == "gaussian_deblur":
+        from utils import utils_sisr as sr
+
     schedule = load_record(
         fixture,
         fixture_manifest["schedule"],
@@ -154,19 +163,25 @@ def main() -> None:
     sampled_noise_levels = schedule["noise_levels"][sampled_timesteps]
     probes = setting["trajectory_probe_steps"]
     algorithm = setting["algorithm"]
-    task = setting["task"]
     sampler = setting["sampler"]
     case_records = []
 
     with torch.no_grad():
         for case in cases:
             case_id = case["id"]
-            tensors = load_record(
-                fixture, case, required=("measurement", "mask", "x_init")
+            required = (
+                ("measurement", "mask", "x_init")
+                if task["name"] == "inpainting"
+                else ("measurement", "kernel", "x_init")
             )
+            tensors = load_record(fixture, case, required=required)
             y = tensors["measurement"].to(device)
-            mask = tensors["mask"].to(device)
             x = tensors["x_init"].to(device)
+            if task["name"] == "inpainting":
+                mask = tensors["mask"].to(device)
+            else:
+                kernel = tensors["kernel"].to(device)
+                FB, FBC, F2B, FBFy = sr.pre_calculate(y, kernel, sf=1)
             noise = load_record(
                 fixture,
                 case["transition_noise"],
@@ -189,16 +204,29 @@ def main() -> None:
                         * task["algorithm_sigma"] ** 2
                         / schedule["noise_levels"][timestep].to(device) ** 2
                     )
-                    x0_prox = (mask * (2 * y - 1) + rho * x0) / (mask + rho)
+                    if task["name"] == "inpainting":
+                        x0_prox = (mask * (2 * y - 1) + rho * x0) / (mask + rho)
+                    else:
+                        x0_prox = (
+                            sr.data_solution(
+                                x0.float().div(2).add(0.5),
+                                FB,
+                                FBC,
+                                F2B,
+                                FBFy,
+                                rho.float().repeat(1, 1, 1, 1),
+                                sf=1,
+                            )
+                            .mul(2)
+                            .sub(1)
+                        )
                     x0 = x0 + algorithm["guidance_scale"] * (x0_prox - x0)
                     next_timestep = sampled_timesteps[step + 1].item()
                     eps = (
                         x
                         - torch.sqrt(schedule["alpha_cumprod"][timestep]).to(device)
                         * x0
-                    ) / torch.sqrt(
-                        1 - schedule["alpha_cumprod"][timestep]
-                    ).to(device)
+                    ) / torch.sqrt(1 - schedule["alpha_cumprod"][timestep]).to(device)
                     next_alpha = schedule["alpha_cumprod"][next_timestep].to(device)
                     x = (
                         torch.sqrt(next_alpha) * x0

@@ -1,4 +1,4 @@
-"""Create immutable inputs matching DiffPIR's official random-mask convention."""
+"""Create immutable inputs matching DiffPIR's official task conventions."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from PIL import Image
+from scipy import ndimage
 
 DPS_DIR = Path(__file__).resolve().parents[1] / "dps"
 if str(DPS_DIR) not in sys.path:
@@ -29,9 +30,7 @@ from _common import (  # noqa: E402
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--setting", required=True)
-    parser.add_argument(
-        "--fixture-id", default="ffhq256_inpainting_diffpir_quad20_v1"
-    )
+    parser.add_argument("--fixture-id", default="ffhq256_inpainting_diffpir_quad20_v1")
     parser.add_argument("--images", required=True)
     parser.add_argument("--limit", type=int, default=3)
     parser.add_argument("--artifact-root")
@@ -45,6 +44,24 @@ def official_random_mask(size: int, missing_probability: float) -> torch.Tensor:
     mask = torch.ones(size * size, dtype=torch.float32)
     mask[torch.from_numpy(missing)] = 0
     return mask.view(1, 1, size, size).repeat(1, 3, 1, 1)
+
+
+def official_gaussian_kernel(size: int, std: float) -> torch.Tensor:
+    if size < 1 or size % 2 == 0 or std <= 0:
+        raise ValueError("Gaussian kernel size must be positive and odd; std > 0")
+    impulse = np.zeros((size, size), dtype=np.float64)
+    impulse[size // 2, size // 2] = 1
+    kernel = ndimage.gaussian_filter(impulse, sigma=std).astype(np.float32)
+    return torch.from_numpy(kernel).view(1, 1, size, size)
+
+
+def official_circular_blur(image: np.ndarray, kernel: torch.Tensor) -> torch.Tensor:
+    """Match the official uint8 SciPy degradation before float conversion."""
+    kernel_np = kernel.squeeze().numpy()
+    blurred = ndimage.convolve(image, np.expand_dims(kernel_np, axis=2), mode="wrap")
+    return (
+        torch.from_numpy(blurred.copy()).permute(2, 0, 1).unsqueeze(0).float().div(255)
+    )
 
 
 def main() -> None:
@@ -69,8 +86,10 @@ def main() -> None:
     task = setting["task"]
     sampler = setting["sampler"]
     height, width = task["image_size"][-2:]
-    if height != width:
+    if height != width and task["name"] == "inpainting":
         raise ValueError("the official random-mask generator requires square images")
+    if task["name"] not in {"inpainting", "gaussian_deblur"}:
+        raise ValueError(f"unsupported DiffPIR fixture task: {task['name']}")
 
     betas = torch.from_numpy(
         np.linspace(
@@ -115,6 +134,11 @@ def main() -> None:
     schedule_record = save_tensors(destination / "schedule.pt", schedule)
     schedule_record["path"] = "schedule.pt"
     np.random.seed(setting["randomness"]["fixture_seed"])
+    kernel = (
+        official_gaussian_kernel(task["kernel_size"], task["kernel_std"])
+        if task["name"] == "gaussian_deblur"
+        else None
+    )
     cases = []
     for index, image_path in enumerate(images):
         case_id = f"{index:05d}"
@@ -125,23 +149,54 @@ def main() -> None:
 
         clean_01 = torch.from_numpy(image.copy()).permute(2, 0, 1).unsqueeze(0)
         clean_01 = clean_01.float().div(255)
-        mask = official_random_mask(height, task["missing_probability"])
-        measurement = clean_01 * mask
-        measurement_noise = torch.from_numpy(
-            np.random.normal(
-                0, task["measurement_noise_sigma"] * 2, (height, width, 3)
-            ).astype(np.float32)
-        ).permute(2, 0, 1).unsqueeze(0).div(2)
-        measurement = measurement + measurement_noise
+        if task["name"] == "inpainting":
+            mask = official_random_mask(height, task["missing_probability"])
+            clean_measurement = clean_01 * mask
+            measurement_noise = (
+                torch.from_numpy(
+                    np.random.normal(
+                        0, task["measurement_noise_sigma"] * 2, (height, width, 3)
+                    ).astype(np.float32)
+                )
+                .permute(2, 0, 1)
+                .unsqueeze(0)
+                .div(2)
+            )
+            measurement = clean_measurement + measurement_noise
+        else:
+            clean_measurement = official_circular_blur(image, kernel)
+            noisy = clean_measurement.squeeze(0).permute(1, 2, 0).numpy().copy()
+            noisy = noisy * 2 - 1
+            noise_rng = np.random.RandomState(setting["randomness"]["measurement_seed"])
+            noisy += noise_rng.normal(
+                0, task["measurement_noise_sigma"] * 2, noisy.shape
+            )
+            noisy = noisy / 2 + 0.5
+            measurement = torch.from_numpy(noisy).permute(2, 0, 1).unsqueeze(0)
+            measurement_noise = measurement - clean_measurement
 
         initial_generator = torch.Generator().manual_seed(
             setting["randomness"]["x_init_seed"] + index
         )
         initial_noise = torch.randn(clean_01.shape, generator=initial_generator)
-        initial_state = (
-            torch.sqrt(alpha_cumprod[-1]) * (2 * measurement - 1)
-            + torch.sqrt(1 - alpha_cumprod[-1]) * initial_noise
-        )
+        if task["name"] == "gaussian_deblur":
+            t_y = torch.abs(noise_levels - 2 * task["noise_level"]).argmin()
+            sqrt_alpha_effective = torch.sqrt(alpha_cumprod[-1]) / torch.sqrt(
+                alpha_cumprod[t_y]
+            )
+            initial_state = (
+                sqrt_alpha_effective * (2 * measurement - 1)
+                + torch.sqrt(
+                    (1 - alpha_cumprod[-1])
+                    - sqrt_alpha_effective**2 * (1 - alpha_cumprod[t_y])
+                )
+                * initial_noise
+            )
+        else:
+            initial_state = (
+                torch.sqrt(alpha_cumprod[-1]) * (2 * measurement - 1)
+                + torch.sqrt(1 - alpha_cumprod[-1]) * initial_noise
+            )
         transition_generator = torch.Generator().manual_seed(
             setting["randomness"]["transition_seed"] + index
         )
@@ -153,12 +208,15 @@ def main() -> None:
         tensors = {
             "ground_truth": clean_01.mul(2).sub(1),
             "measurement": measurement,
-            "effective_measurement": measurement * mask,
-            "mask": mask,
+            "clean_measurement": clean_measurement,
             "measurement_noise": measurement_noise,
             "initial_noise": initial_noise,
             "x_init": initial_state,
         }
+        if task["name"] == "inpainting":
+            tensors.update({"effective_measurement": measurement * mask, "mask": mask})
+        else:
+            tensors["kernel"] = kernel
         record = save_tensors(destination / "cases" / f"{case_id}.pt", tensors)
         record.update(
             {
@@ -189,6 +247,7 @@ def main() -> None:
         "created_at": utc_now(),
         "source_setting_id": setting["id"],
         "source_setting_sha256": file_sha256(setting_file),
+        "task": task["name"],
         "schedule": schedule_record,
         "schedule_tensor_sha256": tensor_dict_sha256(schedule),
         "randomness": setting["randomness"],

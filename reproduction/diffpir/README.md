@@ -1,5 +1,8 @@
 # DiffPIR alignment
 
+论文四个退化族、20/100 NFE 超参数及官方 demo 差异见
+[`PAPER_BENCHMARK_SETTINGS.zh-CN.md`](PAPER_BENCHMARK_SETTINGS.zh-CN.md)。
+
 This directory aligns DeepInv's `DiffPIR` with the official DiffPIR
 `main_ddpir.py` inpainting path at commit
 `2a9898129a1b274131b98746e5b364bc20adc1e1`.
@@ -27,3 +30,13 @@ raw-tensor differences, and trajectory-probe differences.
 `prepare_inputs.py`, `run_reference.py`, and `run_deepinv.py` retain explicit
 CLI options for harness development, but they are not needed for the normal
 reproduction command.
+
+## Gaussian deblur（当前第一阶段）
+
+以下脚本固定使用 `DiffPIR/testsets/demo_test` 的五张 PNG、论文的 61×61 / std=3.0 Gaussian kernel，并覆盖有/无测量噪声及 20/100 NFE 四组论文参数：
+
+```bash
+bash reproduction/diffpir/reproduce_gaussian_deblur.sh
+```
+
+脚本不接受参数。它先在四张同型号 GPU 上运行锁定的原始仓库并保存 `reference_metrics.json`，然后才运行 DeepInv；最后每个 setting 都生成包含两边独立 PSNR/SSIM/LPIPS、差值及 tensor/trajectory 误差的 `comparison.json`，以及五图 `visualization.png`。论文表格是 100 图集合指标，五图运行不计算 FID，也不把五图均值标记为论文复现通过。
