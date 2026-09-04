@@ -59,7 +59,7 @@ def verify_reference(repo: Path, commit: str, task: str) -> str:
         paths.extend(
             ("main_ddpir.py", "utils/utils_inpaint.py", "configs/inpaint.yaml")
         )
-    elif task == "gaussian_deblur":
+    elif task in {"gaussian_deblur", "motion_deblur"}:
         paths.extend(("main_ddpir_deblur.py", "utils/utils_sisr.py"))
     else:
         raise ValueError(f"unsupported DiffPIR reference task: {task}")
@@ -151,7 +151,7 @@ def main() -> None:
     configure_determinism(setting["randomness"]["fixture_seed"])
     device = torch.device(args.device)
     model, diffusion = build_model(repo, checkpoint, device)
-    if task["name"] == "gaussian_deblur":
+    if task["name"] in {"gaussian_deblur", "motion_deblur"}:
         from utils import utils_sisr as sr
 
     schedule = load_record(

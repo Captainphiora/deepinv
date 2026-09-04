@@ -232,7 +232,7 @@ def main() -> None:
                 mask=tensors["mask"].to(device),
                 device=device,
             )
-        elif task["name"] == "gaussian_deblur":
+        elif task["name"] in {"gaussian_deblur", "motion_deblur"}:
 
             class OfficialDiffPIRBlurFFT(dinv.physics.BlurFFT):
                 def prox_l2(self, z, y, gamma, **kwargs):

@@ -10,7 +10,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import deepinv as dinv  # noqa: E402
-from prepare_inputs import official_gaussian_kernel, official_random_mask  # noqa: E402
+from prepare_inputs import (  # noqa: E402
+    official_gaussian_kernel,
+    official_motion_kernel,
+    official_random_mask,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from run_deepinv import official_diffpir_deblur_prox  # noqa: E402
@@ -22,6 +26,18 @@ class ZeroEpsilon(torch.nn.Module):
 
 
 class DiffPIRAlignmentTest(unittest.TestCase):
+    def test_motion_kernel_uses_official_second_construction(self):
+        class FakeKernel:
+            def __init__(self, size, intensity):
+                self.kernelMatrix = np.full(size, np.random.rand(), dtype=np.float32)
+
+        np.random.seed(30)
+        np.random.rand()
+        expected = np.random.rand()
+        kernel = official_motion_kernel(FakeKernel, 3, 0.5, case_index=3)
+        self.assertEqual(kernel.shape, (1, 1, 3, 3))
+        self.assertTrue(torch.equal(kernel, torch.full_like(kernel, expected)))
+
     def test_deblur_prox_matches_official_fft_closed_form(self):
         torch.manual_seed(0)
         kernel = official_gaussian_kernel(5, 1.0)

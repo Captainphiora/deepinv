@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -32,6 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--setting", required=True)
     parser.add_argument("--fixture-id", default="ffhq256_inpainting_diffpir_quad20_v1")
     parser.add_argument("--images", required=True)
+    parser.add_argument("--motionblur-repo")
     parser.add_argument("--limit", type=int, default=3)
     parser.add_argument("--artifact-root")
     parser.add_argument("--dry-run", action="store_true")
@@ -53,6 +56,26 @@ def official_gaussian_kernel(size: int, std: float) -> torch.Tensor:
     impulse[size // 2, size // 2] = 1
     kernel = ndimage.gaussian_filter(impulse, sigma=std).astype(np.float32)
     return torch.from_numpy(kernel).view(1, 1, size, size)
+
+
+def load_motion_kernel_type(repo: Path):
+    source = repo / "motionblur.py"
+    spec = importlib.util.spec_from_file_location("_diffpir_motionblur", source)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load motionblur source: {source}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.Kernel
+
+
+def official_motion_kernel(
+    kernel_type: type, size: int, intensity: float, case_index: int
+) -> torch.Tensor:
+    """Match MotionBlurOperator's two Kernel constructions per image."""
+    np.random.seed(case_index * 10)
+    kernel_type(size=(size, size), intensity=intensity).kernelMatrix
+    kernel = kernel_type(size=(size, size), intensity=intensity).kernelMatrix
+    return torch.from_numpy(kernel.copy()).float().view(1, 1, size, size)
 
 
 def official_circular_blur(image: np.ndarray, kernel: torch.Tensor) -> torch.Tensor:
@@ -88,8 +111,42 @@ def main() -> None:
     height, width = task["image_size"][-2:]
     if height != width and task["name"] == "inpainting":
         raise ValueError("the official random-mask generator requires square images")
-    if task["name"] not in {"inpainting", "gaussian_deblur"}:
+    if task["name"] not in {"inpainting", "gaussian_deblur", "motion_deblur"}:
         raise ValueError(f"unsupported DiffPIR fixture task: {task['name']}")
+
+    motionblur = None
+    motion_kernel_type = None
+    if task["name"] == "motion_deblur":
+        if not args.motionblur_repo:
+            raise ValueError("--motionblur-repo is required for motion deblur")
+        motionblur_repo = Path(args.motionblur_repo).resolve()
+        source = motionblur_repo / "motionblur.py"
+        revision = subprocess.run(
+            [
+                "git",
+                "-c",
+                f"safe.directory={motionblur_repo}",
+                "-C",
+                str(motionblur_repo),
+                "rev-parse",
+                "HEAD",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if revision != task["motionblur_commit"]:
+            raise ValueError(
+                "motionblur repository revision does not match the setting"
+            )
+        if file_sha256(source) != task["motionblur_source_sha256"]:
+            raise ValueError("motionblur.py SHA256 does not match the setting")
+        motion_kernel_type = load_motion_kernel_type(motionblur_repo)
+        motionblur = {
+            "repository": str(motionblur_repo),
+            "revision": revision,
+            "source_sha256": task["motionblur_source_sha256"],
+        }
 
     betas = torch.from_numpy(
         np.linspace(
@@ -149,6 +206,13 @@ def main() -> None:
 
         clean_01 = torch.from_numpy(image.copy()).permute(2, 0, 1).unsqueeze(0)
         clean_01 = clean_01.float().div(255)
+        if task["name"] == "motion_deblur":
+            kernel = official_motion_kernel(
+                motion_kernel_type,
+                task["kernel_size"],
+                task["kernel_intensity"],
+                index,
+            )
         if task["name"] == "inpainting":
             mask = official_random_mask(height, task["missing_probability"])
             clean_measurement = clean_01 * mask
@@ -179,7 +243,7 @@ def main() -> None:
             setting["randomness"]["x_init_seed"] + index
         )
         initial_noise = torch.randn(clean_01.shape, generator=initial_generator)
-        if task["name"] == "gaussian_deblur":
+        if task["name"] in {"gaussian_deblur", "motion_deblur"}:
             t_y = torch.abs(noise_levels - 2 * task["noise_level"]).argmin()
             sqrt_alpha_effective = torch.sqrt(alpha_cumprod[-1]) / torch.sqrt(
                 alpha_cumprod[t_y]
@@ -253,6 +317,8 @@ def main() -> None:
         "randomness": setting["randomness"],
         "cases": cases,
     }
+    if motionblur is not None:
+        manifest["dependencies"] = {"motionblur": motionblur}
     write_json(destination / "manifest.json", manifest)
     print(destination / "manifest.json")
 

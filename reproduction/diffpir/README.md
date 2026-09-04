@@ -42,3 +42,13 @@ bash reproduction/diffpir/reproduce_gaussian_deblur.sh
 脚本不接受参数。它先在四张同型号 GPU 上运行锁定的原始仓库并保存 `reference_metrics.json`，然后才运行 DeepInv；最后每个 setting 都生成包含两边独立 PSNR/SSIM/LPIPS、差值及 tensor/trajectory 误差的 `comparison.json`，以及五图 `visualization.png`。论文表格是 100 图集合指标，五图运行不计算 FID，也不把五图均值标记为论文复现通过。
 
 五图四组 setting 已于 run `gaussian-deblur-20260904T161716Z` 全部通过；固定结果摘要与 artifact SHA256 见 [`certifications/gaussian_deblur_ffhq5_v1.json`](certifications/gaussian_deblur_ffhq5_v1.json)。
+
+## Motion deblur（当前第二阶段）
+
+以下脚本同样固定五张 `demo_test` 图片，使用 61×61、intensity=0.5 的逐图 motion kernel，并覆盖有/无测量噪声及 20/100 NFE：
+
+```bash
+bash reproduction/diffpir/reproduce_motion_deblur.sh
+```
+
+脚本固定并校验外部 `motionblur` commit 与源码 SHA256；每张图最终使用的第二次生成 kernel 会直接保存到 `.pt`。执行顺序和 Gaussian deblur 相同，且不接受命令行参数。

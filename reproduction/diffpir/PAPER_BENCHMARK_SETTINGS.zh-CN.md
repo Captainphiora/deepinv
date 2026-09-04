@@ -287,3 +287,5 @@ kernel_std_i = 3.0 * abs(np.random.rand() * 2 + 1)
 顺序固定为：先运行锁定 commit 的原始仓库并写出 `reference_metrics.json`，再运行 DeepInv，最后生成 `comparison.json` 与 `visualization.png`。五图输入、measurement noise、`x_init`、transition-noise tape、kernel 和 schedule 均冻结为 `.pt`；每个文件及 tensor 内容均记录 SHA256。
 
 第一阶段结束即停止，不自动继续 motion deblur、SR 或 inpainting 论文 setting，等待用户确认。
+
+第二阶段在用户确认后进入 motion deblur：仍使用上述五张图，依次运行 noisy/noiseless × 20/100 NFE 四组 setting；motion kernel 固定为 61×61、intensity=0.5，并按官方 `case_index*10` 种子及两次 `Kernel` 构造顺序生成。完成后停止，等待下一项确认。

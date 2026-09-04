@@ -58,6 +58,9 @@ def main() -> None:
     deepinv = {case["id"]: case for case in implementations["deepinv"]["cases"]}
     metrics = {case["id"]: case for case in comparison["cases"]}
     cases = fixture_manifest["cases"]
+    task_name = fixture_manifest.get("task", "deblur")
+    display_name = task_name.replace("_", " ").title()
+    kernel_name = "Motion kernel" if task_name == "motion_deblur" else "Gaussian kernel"
 
     figure, axes = plt.subplots(
         len(cases), 5, squeeze=False, figsize=(16, 3.4 * len(cases))
@@ -83,7 +86,7 @@ def main() -> None:
                 False,
             ),
             (source["measurement"], "Noisy measurement", True),
-            (kernel, "61×61 Gaussian kernel\n(normalized display)", True),
+            (kernel, f"61×61 {kernel_name}\n(normalized display)", True),
             (
                 official,
                 metric_title("Original repo", metrics[case_id]["reference"]),
@@ -103,7 +106,7 @@ def main() -> None:
 
     mean = comparison["mean"]
     figure.suptitle(
-        f"Gaussian deblur | {run_manifest['setting_id']} | {run_manifest['run_id']}"
+        f"{display_name} | {run_manifest['setting_id']} | {run_manifest['run_id']}"
     )
     figure.text(
         0.5,
