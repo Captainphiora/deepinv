@@ -16,6 +16,9 @@ Every reproduction follows the same order:
 
 The complete Chinese handoff and field reference is
 [`ALIGNMENT_WORKFLOW.zh-CN.md`](ALIGNMENT_WORKFLOW.zh-CN.md).
+The mathematical and implementation conventions for linear degradation operators are
+documented in
+[`LINEAR_DEGRADATION_OPERATORS.zh-CN.md`](LINEAR_DEGRADATION_OPERATORS.zh-CN.md).
 
 Canonical numerical artifacts are `dict[str, torch.Tensor]` `.pt` files. Load
 them with `weights_only=True` and `map_location="cpu"`. Configuration,

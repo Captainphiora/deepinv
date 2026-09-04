@@ -37,11 +37,13 @@ CPU 与 GPU 之间的数值一致性不属于验收项，也不为此增加测�
 1. `$HOME/AGENTS.md`：机器、持久化目录、uv 和 Git 的通用约束。
 2. `.agents/skills/align-inverse-solver/SKILL.md`：跨仓库数值对齐的强制约定。
 3. 本文档：通用工作流、字段字典和完成条件。
-4. `reproduction/<algorithm>/README.md`：该算法的参考仓库、兼容说明和命令。
-5. `reproduction/<algorithm>/settings/<setting-id>.json`：本次实验的唯一配置。
-6. `reproduction/<algorithm>/certifications/<certification-id>.json`：已通过结果和
+4. `reproduction/LINEAR_DEGRADATION_OPERATORS.zh-CN.md`：线性退化的前向、
+   伴随、伪逆、噪声域和跨仓库对齐约定。
+5. `reproduction/<algorithm>/README.md`：该算法的参考仓库、兼容说明和命令。
+6. `reproduction/<algorithm>/settings/<setting-id>.json`：本次实验的唯一配置。
+7. `reproduction/<algorithm>/certifications/<certification-id>.json`：已通过结果和
    artifact 哈希。
-7. 最后再读取算法实现、runner 和测试代码。
+8. 最后再读取算法实现、runner 和测试代码。
 
 接手后首先运行以下只读检查：
 
