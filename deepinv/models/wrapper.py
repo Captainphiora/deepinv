@@ -30,12 +30,19 @@ class ScoreModelWrapper(Denoiser):
     :param int n_timesteps: number of time steps for discrete schedules. Default is `1000`.
     :param bool _was_trained_on_minus_one_one: whether the model was trained on images in `[-1, 1]` range (`True`) or `[0, 1]` range (`False`). Default is `True`.
     :param str: device to load the model on. Default is `'cpu'`.
+    :param str model_input_type: condition expected by the wrapped model. One of
+        ``"timestep"``, ``"noise_level"`` or ``"continuous_time"``. If omitted,
+        the legacy ``takes_integer_time`` behavior is used.
+    :param str variance_type: optional learned variance head type. One of
+        ``None``, ``"learned"`` or ``"learned_range"``. When set, the model must
+        return exactly twice as many channels as its input.
+    :param dict model_kwargs: keyword arguments passed to every model call.
     """
 
     def __init__(
         self,
         score_model: nn.Module | Callable = None,
-        prediction_type: str = "epsilon",  # prediction_type: "epsilon", "v_prediction", or "sample"
+        prediction_type: str = "epsilon",
         clip_output: bool = True,
         sigma_t: Callable | torch.Tensor = None,
         scale_t: Callable | torch.Tensor = None,
@@ -47,13 +54,37 @@ class ScoreModelWrapper(Denoiser):
         n_timesteps: int = 1000,
         _was_trained_on_minus_one_one: bool = True,
         device: str | torch.device = "cpu",
+        model_input_type: str = None,
+        variance_type: str = None,
+        model_kwargs: dict | None = None,
     ):
         super().__init__()
         self.model = score_model
         self.clip_output = clip_output
-        if prediction_type not in ["epsilon", "v_prediction", "sample"]:
+        prediction_types = ["epsilon", "v_prediction", "sample"]
+        if prediction_type not in prediction_types:
             raise ValueError(
-                f"Unsupported prediction_type: {prediction_type}. Supported types are 'epsilon', 'v_prediction', and 'sample'."
+                f"Unsupported prediction_type: {prediction_type}. Supported types are {prediction_types}."
+            )
+
+        model_input_types = ["timestep", "noise_level", "continuous_time"]
+        if model_input_type is None:
+            model_input_type = (
+                "timestep" if takes_integer_time else "continuous_time"
+            )
+        elif model_input_type not in model_input_types:
+            raise ValueError(
+                f"Unsupported model_input_type: {model_input_type}. Supported types are {model_input_types}."
+            )
+        elif takes_integer_time and model_input_type != "timestep":
+            raise ValueError(
+                "takes_integer_time=True is only compatible with model_input_type='timestep'."
+            )
+
+        variance_types = [None, "learned", "learned_range"]
+        if variance_type not in variance_types:
+            raise ValueError(
+                f"Unsupported variance_type: {variance_type}. Supported types are {variance_types}."
             )
 
         if variance_preserving and variance_exploding:
@@ -62,7 +93,11 @@ class ScoreModelWrapper(Denoiser):
             )
 
         self.prediction_type = prediction_type
-        self.takes_integer_time = takes_integer_time
+        self.model_input_type = model_input_type
+        # Kept as a public compatibility attribute for existing callers.
+        self.takes_integer_time = model_input_type == "timestep"
+        self.variance_type = variance_type
+        self.model_kwargs = {} if model_kwargs is None else dict(model_kwargs)
         self.n_timesteps = n_timesteps
         self._was_trained_on_minus_one_one = _was_trained_on_minus_one_one
         self.variance_preserving = variance_preserving
@@ -184,6 +219,100 @@ class ScoreModelWrapper(Denoiser):
             val = val.view(-1, *[1] * (len(target_size) - 1))
         return val
 
+    def _prepare_condition(
+        self, condition, condition_type: str, x: torch.Tensor
+    ) -> torch.Tensor:
+        """Prepare an explicitly typed scalar or batch-wise model condition."""
+        condition_types = ["timestep", "noise_level", "continuous_time"]
+        if condition_type not in condition_types:
+            raise ValueError(
+                f"Unsupported condition_type: {condition_type}. Supported types are {condition_types}."
+            )
+        if condition_type != self.model_input_type:
+            raise ValueError(
+                f"condition_type='{condition_type}' does not match "
+                f"model_input_type='{self.model_input_type}'."
+            )
+        if condition is None:
+            raise ValueError("A model condition must be provided.")
+
+        condition_dtype = (
+            torch.float32 if condition_type == "timestep" else x.dtype
+        )
+        value = self._handle_sigma(
+            condition,
+            batch_size=x.shape[0],
+            device=x.device,
+            dtype=condition_dtype,
+        )
+        if condition_type == "timestep":
+            if not torch.equal(value, value.round()):
+                raise ValueError("Timestep conditions must contain integer values.")
+            value = value.long()
+            if torch.any(value < 0) or torch.any(value >= self.n_timesteps):
+                raise ValueError(
+                    f"Timestep conditions must be in [0, {self.n_timesteps - 1}]."
+                )
+        return value
+
+    def _run_model(self, x, condition, *args, **kwargs):
+        call_kwargs = self.model_kwargs.copy()
+        call_kwargs.update(kwargs)
+        pred = self.model(x, condition, *args, **call_kwargs)
+        if isinstance(pred, (list, tuple)):
+            pred = pred[0]
+        return pred.to(x.dtype)
+
+    def _split_prediction(self, pred: torch.Tensor, x: torch.Tensor):
+        if self.variance_type is None:
+            return pred, None
+        if pred.ndim < 2 or pred.shape[1] != 2 * x.shape[1]:
+            raise ValueError(
+                "A learned variance model must return exactly twice the input channels "
+                f"(got {pred.shape[1] if pred.ndim >= 2 else 'no channel dimension'}, "
+                f"expected {2 * x.shape[1]})."
+            )
+        return pred.chunk(2, dim=1)
+
+    def predict(
+        self,
+        x: torch.Tensor,
+        condition,
+        condition_type: str = None,
+        output_type: str = None,
+        input_in_minus_one_one: bool = True,
+        **kwargs,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        r"""Run the wrapped model with an explicitly typed condition.
+
+        Unlike :meth:`forward`, this method exposes the model's native prediction
+        without conversion or clipping. A learned variance head is returned
+        separately when ``variance_type`` is set.
+
+        ``condition_type`` must match ``model_input_type``; no implicit conversion
+        is performed, so integer timesteps reach discrete diffusion models exactly.
+        """
+        condition_type = (
+            self.model_input_type if condition_type is None else condition_type
+        )
+        output_type = self.prediction_type if output_type is None else output_type
+        if output_type != self.prediction_type:
+            raise ValueError(
+                "predict does not convert prediction types; output_type must match "
+                f"prediction_type='{self.prediction_type}'."
+            )
+
+        condition = self._prepare_condition(condition, condition_type, x)
+        x_model = x
+        if not input_in_minus_one_one and self._was_trained_on_minus_one_one:
+            x_model = x * 2 - 1
+            if condition_type == "noise_level":
+                condition = condition * 2
+
+        pred = self._run_model(x_model, condition, **kwargs)
+        pred, variance_values = self._split_prediction(pred, x_model)
+        return pred, variance_values
+
     def _pred_to_score(self, pred, x, sigma, scale):
         pt = self.prediction_type
         if pt == "epsilon":  # predicts white noise
@@ -276,28 +405,23 @@ class ScoreModelWrapper(Denoiser):
 
         :returns: (:class:`torch.Tensor`) the score function of shape `[B, C, H, W]`.
         """
-        device = x.device
-        dtype = x.dtype
-
         if t is None:  # pragma: no cover
             raise ValueError("A time step t must be provided.")
 
-        # Handle time step
         t = self._handle_sigma(
-            t, batch_size=x.size(), ndim=1, device=device, dtype=dtype
+            t, batch_size=x.shape[0], ndim=1, device=x.device, dtype=x.dtype
         )
-        if self.takes_integer_time:
+        sigma = self.get_schedule_value(self.sigma_t, t, x.shape)
+        scale = self.get_schedule_value(self.scale_t, t, x.shape)
+        if self.model_input_type == "noise_level":
+            t_model = sigma.view(x.shape[0])
+        elif self.takes_integer_time:
             t_model = (t * (self.n_timesteps - 1)).long()
         else:
             t_model = t
-        # UNet forward
-        pred = self.model(x, t_model, *args, return_dict=False, **kwargs)
-        if isinstance(pred, (list, tuple)):
-            pred = pred[0]
-        pred = pred.to(dtype)
-
-        sigma = self.get_schedule_value(self.sigma_t, t, x.shape)
-        scale = self.get_schedule_value(self.scale_t, t, x.shape)
+        kwargs.setdefault("return_dict", False)
+        pred = self._run_model(x, t_model, *args, **kwargs)
+        pred, _ = self._split_prediction(pred, x)
 
         return self._pred_to_score(pred, x, sigma, scale)
 
@@ -324,40 +448,37 @@ class ScoreModelWrapper(Denoiser):
 
         :returns: (:class:`torch.Tensor`) the denoised output.
         """
-        device = x.device
-        dtype = x.dtype
-
         if sigma is None:  # pragma: no cover
             raise ValueError("A noise level sigma must be provided.")
 
-        # Handle sigma
-        sigma = self._handle_sigma(
+        sigma_batch = self._handle_sigma(
             sigma,
             batch_size=x.shape[0],
-            ndim=x.ndim,
-            device=device,
-            dtype=dtype,
+            device=x.device,
+            dtype=x.dtype,
         )
         if not input_in_minus_one_one and self._was_trained_on_minus_one_one:
-            sigma = sigma * 2  # since image is in [-1, 1] range in the model
+            sigma_batch = (
+                sigma_batch * 2
+            )  # since image is in [-1, 1] range in the model
 
-        timestep = self.time_from_sigma(sigma.squeeze())
+        timestep = self.time_from_sigma(sigma_batch)
         scale = self.get_schedule_value(self.scale_t, timestep, x.shape)
+        sigma = sigma_batch.view(-1, *[1] * (x.ndim - 1))
 
         if not input_in_minus_one_one and self._was_trained_on_minus_one_one:
             # Rescale input x from [0, 1] to model scale [-1, 1] and apply scaling following DDPM
             x = (x * 2 - 1) * scale
         else:
             x = x * scale
-        if self.takes_integer_time:
+        if self.model_input_type == "noise_level":
+            t_model = sigma_batch
+        elif self.takes_integer_time:
             t_model = (timestep * (self.n_timesteps - 1)).long()
         else:
             t_model = timestep
-        # UNet forward
-        pred = self.model(x, t_model, *args, **kwargs)
-        if isinstance(pred, (list, tuple)):
-            pred = pred[0]  # take the first output if multiple outputs are returned
-        pred = pred.to(dtype)
+        pred = self._run_model(x, t_model, *args, **kwargs)
+        pred, _ = self._split_prediction(pred, x)
 
         # Convert model output to x0 depending on prediction type
         x0 = self._pred_to_x0(pred, x, sigma, scale)

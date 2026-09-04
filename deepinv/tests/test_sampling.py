@@ -10,6 +10,7 @@ from deepinv.sampling import (
     SKRock,
     DiffPIR,
     DPS,
+    DiscreteDPS,
     sampling_builder,
     DDRM,
     VarianceExplodingDiffusion,
@@ -24,6 +25,33 @@ from deepinv.sampling import (
 from deepinv.models import NCSNpp, ADMUNet, DRUNet
 
 SAMPLING_ALGOS = ["DDRM", "ULA", "SKRock"]
+
+
+class _DiscretePrediction(torch.nn.Module):
+    def __init__(self, epsilon=0.0, variance=0.0):
+        super().__init__()
+        self.epsilon = epsilon
+        self.variance = variance
+        self.last_condition = None
+
+    def predict(self, x, condition, **kwargs):
+        assert kwargs == {
+            "condition_type": "timestep",
+            "output_type": "epsilon",
+            "input_in_minus_one_one": True,
+        }
+        self.last_condition = condition.detach().clone()
+        return x * 0 + self.epsilon, x * 0 + self.variance
+
+
+class _IdentityPhysics:
+    @staticmethod
+    def A(x):
+        return x
+
+    @staticmethod
+    def A_dagger(y):
+        return y
 
 
 def choose_algo(algo, likelihood, thresh_conv, sigma, sigma_prior):
@@ -206,6 +234,135 @@ def test_algo_inpaint(name_algo, device):
 
     assert (mean_target_inmask - mean_crop).abs() < 0.2
     assert (mean_target_masked - mean_outside_crop).abs() < 0.02
+
+
+def test_discrete_dps_timestep_respacing():
+    betas = np.linspace(0.001, 0.01, 10, dtype=np.float64)
+    model = _DiscretePrediction()
+    dps = DiscreteDPS(model, betas=betas, timestep_respacing=4)
+
+    assert dps.timestep_map.tolist() == [0, 3, 6, 9]
+    expected = np.cumprod(1.0 - betas)[[0, 3, 6, 9]]
+    np.testing.assert_allclose(dps.alphas_cumprod.numpy(), expected, rtol=1e-14)
+
+    ddim = DiscreteDPS(
+        model, sampler="ddim", betas=betas, timestep_respacing="ddim5"
+    )
+    assert ddim.timestep_map.tolist() == [0, 2, 4, 6, 8]
+
+    model.variance_type = "learned"
+    with pytest.raises(ValueError, match="learned-range"):
+        DiscreteDPS(model, sampler="ddpm", betas=betas, timestep_respacing=4)
+
+
+def test_discrete_dps_ddpm_learned_range_step():
+    model = _DiscretePrediction(epsilon=0.0, variance=1.0)
+    dps = DiscreteDPS(
+        model,
+        sampler="ddpm",
+        betas=np.array([0.1, 0.2]),
+        timestep_respacing=2,
+        clip_denoised=False,
+    )
+    x = torch.full((1, 1, 1, 1), 0.25)
+    noise = torch.full_like(x, 0.4)
+    out = dps.p_sample(x, torch.tensor([1]), noise=noise)
+
+    alpha_bar = 0.9 * 0.8
+    pred_xstart = x / np.sqrt(alpha_bar)
+    mean = (
+        0.2 * np.sqrt(0.9) / (1.0 - alpha_bar) * pred_xstart
+        + 0.1 * np.sqrt(0.8) / (1.0 - alpha_bar) * x
+    )
+    expected = mean + np.sqrt(0.2) * noise
+    torch.testing.assert_close(out["sample"], expected)
+    assert model.last_condition.tolist() == [1]
+
+    at_zero_a = dps.p_sample(x, 0, noise=torch.ones_like(x))["sample"]
+    at_zero_b = dps.p_sample(x, 0, noise=torch.zeros_like(x))["sample"]
+    torch.testing.assert_close(at_zero_a, at_zero_b)
+
+
+def test_discrete_dps_ddim_eta_step():
+    eta = 0.5
+    model = _DiscretePrediction(epsilon=0.1, variance=0.0)
+    dps = DiscreteDPS(
+        model,
+        sampler="ddim",
+        betas=np.array([0.1, 0.2]),
+        timestep_respacing=2,
+        eta=eta,
+        clip_denoised=False,
+    )
+    x = torch.full((1, 1, 1, 1), 0.25)
+    noise = torch.full_like(x, -0.3)
+    out = dps.p_sample(x, 1, noise=noise)
+
+    alpha_bar = 0.9 * 0.8
+    alpha_bar_prev = 0.9
+    pred_xstart = x / np.sqrt(alpha_bar) - np.sqrt(1 / alpha_bar - 1) * 0.1
+    epsilon = (x / np.sqrt(alpha_bar) - pred_xstart) / np.sqrt(
+        1 / alpha_bar - 1
+    )
+    sigma = eta * np.sqrt(
+        (1 - alpha_bar_prev) / (1 - alpha_bar)
+    ) * np.sqrt(1 - alpha_bar / alpha_bar_prev)
+    expected = (
+        np.sqrt(alpha_bar_prev) * pred_xstart
+        + np.sqrt(1 - alpha_bar_prev - sigma**2) * epsilon
+        + sigma * noise
+    )
+    torch.testing.assert_close(out["sample"], expected)
+
+
+def test_discrete_dps_fixed_inputs_noise_and_gradient():
+    betas = np.array([0.01, 0.02])
+    model = _DiscretePrediction(epsilon=0.0, variance=0.0)
+    dps = DiscreteDPS(
+        model,
+        sampler="ddpm",
+        betas=betas,
+        timestep_respacing=2,
+        scale=0.1,
+        clip_denoised=False,
+        rng=torch.Generator(),
+    )
+    physics = _IdentityPhysics()
+    y = torch.zeros(1, 1, 1, 2)
+    x_init = torch.tensor([[[[0.2, -0.1]]]])
+    tape = torch.tensor([[[[[0.3, -0.2]]]], [[[[0.9, 0.7]]]]])
+
+    probe = x_init.clone().requires_grad_()
+    first = dps.p_sample(probe, 1, noise=tape[0])
+    distance = torch.linalg.vector_norm(y - physics.A(first["pred_xstart"]))
+    gradient = torch.autograd.grad(distance, probe)[0]
+    expected_first = (first["sample"] - 0.1 * gradient).detach()
+
+    global_state = torch.random.get_rng_state()
+    with torch.no_grad():
+        out_a, trajectory = dps(
+            y,
+            physics,
+            x_init=x_init,
+            seed=1,
+            transition_noise=tape,
+            get_trajectory=True,
+        )
+    out_b = dps(
+        y,
+        physics,
+        x_init=x_init,
+        seed=999,
+        transition_noise=tape,
+    )
+    torch.testing.assert_close(out_a, out_b, rtol=0, atol=0)
+    torch.testing.assert_close(trajectory[1], expected_first)
+    assert trajectory.shape == (3, *x_init.shape)
+    assert torch.equal(torch.random.get_rng_state(), global_state)
+
+    seeded_a = dps(y, physics, seed=7, transition_noise=tape)
+    seeded_b = dps(y, physics, seed=7, transition_noise=tape)
+    torch.testing.assert_close(seeded_a, seeded_b, rtol=0, atol=0)
 
 
 # tests for sample_builder

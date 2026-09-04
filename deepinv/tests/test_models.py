@@ -1983,3 +1983,104 @@ def test_srresnet_inputs():
             16,
             16,
         )
+
+
+class _RecordingScoreModel(torch.nn.Module):
+    def __init__(self, value=0.0, learned_variance=False):
+        super().__init__()
+        self.value = value
+        self.learned_variance = learned_variance
+        self.condition = None
+        self.kwargs = None
+
+    def forward(self, x, condition, **kwargs):
+        self.condition = condition.detach().clone()
+        self.kwargs = kwargs
+        prediction = torch.full_like(x, self.value)
+        if self.learned_variance:
+            return torch.cat((prediction, torch.full_like(x, 2.0)), dim=1)
+        return prediction
+
+
+def test_score_model_wrapper_timestep_and_learned_variance():
+    x = torch.zeros(2, 3, 4, 4)
+    model = _RecordingScoreModel(value=1.0, learned_variance=True)
+    wrapper = dinv.models.ScoreModelWrapper(
+        model,
+        prediction_type="epsilon",
+        model_input_type="timestep",
+        variance_type="learned_range",
+        model_kwargs={"type_t": "timestep"},
+        n_timesteps=1000,
+    )
+
+    prediction, variance = wrapper.predict(
+        x,
+        torch.tensor([999, 17]),
+        condition_type="timestep",
+        output_type="epsilon",
+    )
+
+    assert torch.equal(model.condition, torch.tensor([999, 17]))
+    assert model.kwargs == {"type_t": "timestep"}
+    assert torch.equal(prediction, torch.ones_like(x))
+    assert torch.equal(variance, torch.full_like(x, 2.0))
+
+    wrapper.predict(
+        x.to(torch.bfloat16),
+        torch.tensor([999, 17]),
+        condition_type="timestep",
+        output_type="epsilon",
+    )
+    assert torch.equal(model.condition, torch.tensor([999, 17]))
+
+    unsplit, variance = dinv.models.ScoreModelWrapper(
+        model,
+        prediction_type="epsilon",
+        model_input_type="timestep",
+    ).predict(x, 1, condition_type="timestep")
+    assert unsplit.shape[1] == 2 * x.shape[1]
+    assert variance is None
+
+    with pytest.raises(ValueError, match="twice the input channels"):
+        dinv.models.ScoreModelWrapper(
+            _RecordingScoreModel(),
+            model_input_type="timestep",
+            variance_type="learned",
+        ).predict(x, 1, condition_type="timestep")
+
+
+def test_score_model_wrapper_explicit_condition_types():
+    x = torch.zeros(2, 1, 2, 2)
+    sigma_t = torch.tensor([0.1, 0.2, 0.3])
+
+    noise_model = _RecordingScoreModel()
+    noise_wrapper = dinv.models.ScoreModelWrapper(
+        noise_model,
+        sigma_t=sigma_t,
+        scale_t=torch.ones(3),
+        model_input_type="noise_level",
+        n_timesteps=3,
+    )
+    noise_wrapper.predict(x, [0.12, 0.28], condition_type="noise_level")
+    assert torch.allclose(noise_model.condition, torch.tensor([0.12, 0.28]))
+
+    legacy_x = torch.rand_like(x)
+    legacy_wrapper = dinv.models.ScoreModelWrapper(
+        _RecordingScoreModel(),
+        sigma_t=sigma_t,
+        scale_t=torch.ones(3),
+        takes_integer_time=True,
+        n_timesteps=3,
+    )
+    legacy_output = legacy_wrapper(
+        legacy_x, sigma=0.2, input_in_minus_one_one=True
+    )
+    assert legacy_wrapper.takes_integer_time
+    assert torch.equal(legacy_wrapper.model.condition, torch.tensor([1, 1]))
+    assert torch.equal(legacy_output, legacy_x)
+
+    time_model = _RecordingScoreModel()
+    time_wrapper = dinv.models.ScoreModelWrapper(time_model)
+    time_wrapper.predict(x, [0.2, 0.7], condition_type="continuous_time")
+    assert torch.allclose(time_model.condition, torch.tensor([0.2, 0.7]))

@@ -595,3 +595,350 @@ class DPS(PosteriorDiffusion):
             dtype=dtype,
             **kwargs,
         )
+
+
+def _space_timesteps(num_timesteps, section_counts):
+    """Return the timestep subset used by the original DPS repository."""
+    if isinstance(section_counts, str):
+        if section_counts.startswith("ddim"):
+            desired_count = int(section_counts.removeprefix("ddim"))
+            for stride in range(1, num_timesteps):
+                steps = set(range(0, num_timesteps, stride))
+                if len(steps) == desired_count:
+                    return steps
+            raise ValueError(
+                f"cannot create exactly {desired_count} steps from "
+                f"{num_timesteps} timesteps with an integer stride"
+            )
+        section_counts = [int(x) for x in section_counts.split(",")]
+    elif isinstance(section_counts, int):
+        section_counts = [section_counts]
+    else:
+        section_counts = list(section_counts)
+
+    if not section_counts or any(count < 1 for count in section_counts):
+        raise ValueError("timestep_respacing must contain positive step counts")
+
+    size_per = num_timesteps // len(section_counts)
+    extra = num_timesteps % len(section_counts)
+    start_idx = 0
+    all_steps = []
+    for section, section_count in enumerate(section_counts):
+        size = size_per + int(section < extra)
+        if size < section_count:
+            raise ValueError(
+                f"cannot divide a section of {size} steps into {section_count}"
+            )
+        frac_stride = 1 if section_count == 1 else (size - 1) / (section_count - 1)
+        cur_idx = 0.0
+        for _ in range(section_count):
+            all_steps.append(start_idx + round(cur_idx))
+            cur_idx += frac_stride
+        start_idx += size
+    return set(all_steps)
+
+
+class DiscreteDPS(Reconstructor):
+    r"""Original-repository-compatible discrete DPS sampler.
+
+    Unlike :class:`DPS`, which integrates a continuous reverse-time SDE, this
+    class reproduces the discrete ``GaussianDiffusion``/``SpacedDiffusion``
+    DDPM and DDIM transitions used by the original DPS implementation.
+
+    For cross-repository alignment of a stochastic run, pass the same explicit
+    ``transition_noise`` tape to both implementations. Equal seeds alone are
+    insufficient because the original loop consumes additional random numbers
+    while diffusing the measurement.
+
+    The model must expose ``predict`` and return ``(epsilon, variance_values)``.
+    ``variance_values`` is required for DDPM's learned-range variance head.
+
+    :param torch.nn.Module model: wrapped epsilon-prediction diffusion model.
+    :param str sampler: ``"ddpm"`` or ``"ddim"``.
+    :param betas: base diffusion beta schedule. Defaults to the original
+        1000-step linear schedule.
+    :param timestep_respacing: original ``space_timesteps`` specification.
+    :param float eta: DDIM stochasticity parameter.
+    :param float scale: DPS measurement-gradient scale.
+    :param bool clip_denoised: clamp predicted clean samples to ``[-1, 1]``.
+    :param torch.Generator rng: private random number generator.
+    :param bool verbose: display a progress bar.
+    """
+
+    def __init__(
+        self,
+        model,
+        sampler="ddpm",
+        betas=None,
+        timestep_respacing=1000,
+        eta=0.0,
+        scale=1.0,
+        clip_denoised=True,
+        rng=None,
+        verbose=False,
+    ):
+        super().__init__()
+        sampler = sampler.lower()
+        if sampler not in {"ddpm", "ddim"}:
+            raise ValueError(f"sampler must be 'ddpm' or 'ddim', got {sampler!r}")
+        if eta < 0:
+            raise ValueError("eta must be non-negative")
+        variance_type = getattr(model, "variance_type", None)
+        if sampler == "ddpm" and variance_type not in {None, "learned_range"}:
+            raise ValueError(
+                "DDPM compatibility requires learned-range variance predictions"
+            )
+
+        if betas is None:
+            betas = np.linspace(0.0001, 0.02, 1000, dtype=np.float64)
+        elif isinstance(betas, torch.Tensor):
+            betas = betas.detach().cpu().numpy()
+        betas = np.asarray(betas, dtype=np.float64)
+        if betas.ndim != 1 or len(betas) < 1:
+            raise ValueError("betas must be a non-empty one-dimensional array")
+        if not ((betas > 0).all() and (betas < 1).all()):
+            raise ValueError("betas must be in (0, 1)")
+
+        use_timesteps = _space_timesteps(len(betas), timestep_respacing)
+        base_alphas_cumprod = np.cumprod(1.0 - betas)
+        timestep_map = []
+        spaced_betas = []
+        last_alpha_cumprod = 1.0
+        for i, alpha_cumprod in enumerate(base_alphas_cumprod):
+            if i in use_timesteps:
+                spaced_betas.append(1 - alpha_cumprod / last_alpha_cumprod)
+                last_alpha_cumprod = alpha_cumprod
+                timestep_map.append(i)
+
+        betas = np.asarray(spaced_betas, dtype=np.float64)
+        alphas = 1.0 - betas
+        alphas_cumprod = np.cumprod(alphas)
+        alphas_cumprod_prev = np.append(1.0, alphas_cumprod[:-1])
+        posterior_variance = (
+            betas
+            * (1.0 - alphas_cumprod_prev)
+            / (1.0 - alphas_cumprod)
+        )
+        if len(betas) > 1:
+            first_log_variance = posterior_variance[1]
+        else:  # The original implementation assumes >=2 steps; keep 1-step useful.
+            first_log_variance = betas[0]
+        posterior_log_variance_clipped = np.log(
+            np.append(first_log_variance, posterior_variance[1:])
+        )
+
+        self.model = model
+        self.sampler = sampler
+        self.eta = float(eta)
+        self.scale = float(scale)
+        self.clip_denoised = clip_denoised
+        self.rng = rng
+        self.verbose = verbose
+        self.num_timesteps = len(betas)
+        self.original_num_steps = len(base_alphas_cumprod)
+        self.use_timesteps = use_timesteps
+
+        arrays = {
+            "betas": betas,
+            "alphas_cumprod": alphas_cumprod,
+            "alphas_cumprod_prev": alphas_cumprod_prev,
+            "sqrt_recip_alphas_cumprod": np.sqrt(1.0 / alphas_cumprod),
+            "sqrt_recipm1_alphas_cumprod": np.sqrt(1.0 / alphas_cumprod - 1),
+            "posterior_mean_coef1": betas
+            * np.sqrt(alphas_cumprod_prev)
+            / (1.0 - alphas_cumprod),
+            "posterior_mean_coef2": (1.0 - alphas_cumprod_prev)
+            * np.sqrt(alphas)
+            / (1.0 - alphas_cumprod),
+            "posterior_log_variance_clipped": posterior_log_variance_clipped,
+            "noise_levels": np.sqrt((1.0 - alphas_cumprod) / alphas_cumprod),
+        }
+        for name, array in arrays.items():
+            self.register_buffer(name, torch.from_numpy(array.copy()))
+        self.register_buffer(
+            "timestep_map", torch.tensor(timestep_map, dtype=torch.long)
+        )
+
+    @staticmethod
+    def _extract(array, t, target):
+        # The original implementation computes schedules in float64, then casts
+        # extracted coefficients to float32 before applying them to the sample.
+        value = array[t.to(array.device)].to(device=target.device, dtype=torch.float32)
+        return value.view(-1, *([1] * (target.ndim - 1))).expand_as(target)
+
+    @staticmethod
+    def _batch_timesteps(t, x):
+        t = torch.as_tensor(t, device=x.device, dtype=torch.long)
+        if t.ndim == 0:
+            t = t.expand(x.shape[0])
+        elif t.ndim != 1 or t.shape[0] != x.shape[0]:
+            raise ValueError("t must be scalar or have one value per batch element")
+        if (t < 0).any():
+            raise ValueError("invalid timestep")
+        return t
+
+    def _rng_for(self, device, seed=None):
+        device = torch.device(device)
+        if self.rng is None:
+            self.rng = torch.Generator(device=device)
+            if seed is None:
+                self.rng.seed()
+        if torch.device(self.rng.device) != device:
+            raise ValueError(
+                f"rng is on {self.rng.device}, but samples are on {device}"
+            )
+        if seed is not None:
+            self.rng.manual_seed(seed)
+        return self.rng
+
+    def _randn_like(self, x):
+        return torch.empty_like(x).normal_(generator=self._rng_for(x.device))
+
+    def p_mean_variance(self, x, t):
+        """Compute the original DPS model mean and predicted clean sample."""
+        t = self._batch_timesteps(t, x)
+        if (t >= self.num_timesteps).any():
+            raise ValueError(f"timestep must be smaller than {self.num_timesteps}")
+        original_t = self.timestep_map.to(t.device)[t]
+        result = self.model.predict(
+            x,
+            original_t,
+            condition_type="timestep",
+            output_type="epsilon",
+            input_in_minus_one_one=True,
+        )
+        if not isinstance(result, (tuple, list)) or len(result) != 2:
+            raise ValueError("model.predict must return (prediction, variance_values)")
+        epsilon, variance_values = result
+        if epsilon.shape != x.shape:
+            raise ValueError("epsilon prediction must have the same shape as x")
+
+        pred_xstart = self._extract(
+            self.sqrt_recip_alphas_cumprod, t, x
+        ) * x - self._extract(self.sqrt_recipm1_alphas_cumprod, t, x) * epsilon
+        if self.clip_denoised:
+            pred_xstart = pred_xstart.clamp(-1, 1)
+        mean = self._extract(self.posterior_mean_coef1, t, x) * pred_xstart
+        mean = mean + self._extract(self.posterior_mean_coef2, t, x) * x
+
+        log_variance = None
+        if variance_values is not None:
+            if variance_values.shape != x.shape:
+                raise ValueError("variance prediction must have the same shape as x")
+            min_log = self._extract(self.posterior_log_variance_clipped, t, x)
+            max_log = self._extract(self.betas.log(), t, x)
+            frac = (variance_values + 1.0) / 2.0
+            log_variance = frac * max_log + (1.0 - frac) * min_log
+        elif self.sampler == "ddpm":
+            raise ValueError("DDPM requires learned-range variance values")
+
+        return {
+            "mean": mean,
+            "log_variance": log_variance,
+            "pred_xstart": pred_xstart,
+        }
+
+    def p_sample(self, x, t, noise=None):
+        """Apply one unconditional DDPM or DDIM transition."""
+        t = self._batch_timesteps(t, x)
+        out = self.p_mean_variance(x, t)
+        noise = self._randn_like(x) if noise is None else noise.to(x)
+        if noise.shape != x.shape:
+            raise ValueError("transition noise must have the same shape as x")
+        nonzero = (t != 0).to(x.dtype).view(-1, *([1] * (x.ndim - 1)))
+
+        if self.sampler == "ddpm":
+            sample = out["mean"] + nonzero * torch.exp(
+                0.5 * out["log_variance"]
+            ) * noise
+        else:
+            alpha_bar = self._extract(self.alphas_cumprod, t, x)
+            alpha_bar_prev = self._extract(self.alphas_cumprod_prev, t, x)
+            epsilon = (
+                self._extract(self.sqrt_recip_alphas_cumprod, t, x) * x
+                - out["pred_xstart"]
+            ) / self._extract(self.sqrt_recipm1_alphas_cumprod, t, x)
+            sigma = (
+                self.eta
+                * torch.sqrt((1.0 - alpha_bar_prev) / (1.0 - alpha_bar))
+                * torch.sqrt(1.0 - alpha_bar / alpha_bar_prev)
+            )
+            mean = torch.sqrt(alpha_bar_prev) * out["pred_xstart"]
+            mean = mean + torch.sqrt(1.0 - alpha_bar_prev - sigma**2) * epsilon
+            sample = mean + nonzero * sigma * noise
+
+        return {"sample": sample, "pred_xstart": out["pred_xstart"]}
+
+    def _validate_transition_noise(self, transition_noise, x):
+        if transition_noise is None:
+            return None
+        if isinstance(transition_noise, torch.Tensor):
+            expected = (self.num_timesteps, *x.shape)
+            if tuple(transition_noise.shape) != expected:
+                raise ValueError(
+                    f"transition_noise must have shape {expected}, got "
+                    f"{tuple(transition_noise.shape)}"
+                )
+        elif isinstance(transition_noise, (list, tuple)):
+            if len(transition_noise) != self.num_timesteps:
+                raise ValueError(
+                    f"transition_noise must contain {self.num_timesteps} tensors"
+                )
+            if any(tuple(noise.shape) != tuple(x.shape) for noise in transition_noise):
+                raise ValueError("every transition noise tensor must match x.shape")
+        else:
+            raise TypeError("transition_noise must be a tensor, list, or tuple")
+        return transition_noise
+
+    def forward(
+        self,
+        y,
+        physics,
+        x_init=None,
+        seed=None,
+        transition_noise=None,
+        get_trajectory=False,
+    ):
+        r"""Reconstruct a sample in the original model's ``[-1, 1]`` range.
+
+        ``transition_noise`` follows reverse-loop order and therefore has shape
+        ``(num_timesteps, *x_init.shape)``.
+        """
+        if x_init is None:
+            if physics is None:
+                template = y
+            elif hasattr(physics, "A_dagger"):
+                template = physics.A_dagger(y)
+            else:  # pragma: no cover - compatibility with minimal Physics objects
+                template = physics.A_adjoint(y)
+            rng = self._rng_for(template.device, seed)
+            x = torch.empty_like(template).normal_(generator=rng)
+        else:
+            x = x_init.detach().clone()
+            if seed is not None and transition_noise is None:
+                self._rng_for(x.device, seed)
+
+        transition_noise = self._validate_transition_noise(transition_noise, x)
+        trajectory = [x.clone()] if get_trajectory else None
+        steps = range(self.num_timesteps - 1, -1, -1)
+        for tape_idx, step in enumerate(tqdm(steps, disable=not self.verbose)):
+            t = torch.full((x.shape[0],), step, device=x.device, dtype=torch.long)
+            noise = (
+                None
+                if transition_noise is None
+                else transition_noise[tape_idx].to(device=x.device, dtype=x.dtype)
+            )
+            with torch.enable_grad():
+                x_prev = x.detach().requires_grad_(True)
+                out = self.p_sample(x_prev, t, noise=noise)
+                distance = torch.linalg.vector_norm(
+                    y - physics.A(out["pred_xstart"])
+                )
+                gradient = torch.autograd.grad(distance, x_prev)[0]
+                x = (out["sample"] - self.scale * gradient).detach()
+            if get_trajectory:
+                trajectory.append(x.clone())
+
+        if get_trajectory:
+            return x, torch.stack(trajectory)
+        return x

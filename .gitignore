@@ -47,5 +47,6 @@ kernels/
 measurements/
 degradations/
 results/
+reproduction/artifacts/
 tmp/
 sg_execution_times.rst
