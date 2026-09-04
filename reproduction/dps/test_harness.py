@@ -10,6 +10,7 @@ from _common import (
     requires_transition_noise,
     save_tensors,
     tensor_dict_sha256,
+    update_run_manifest,
 )
 from compare import differences, image_metrics
 
@@ -59,6 +60,31 @@ class HarnessTest(unittest.TestCase):
         self.assertAlmostEqual(metrics["ssim"], 1.0)
         self.assertIs(type(metrics["psnr_db"]), float)
         self.assertIs(type(metrics["ssim"]), float)
+
+    def test_run_manifest_pins_fixture_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            arguments = {
+                "setting_id": "setting",
+                "setting_sha256": "setting-sha",
+                "fixture_id": "fixture",
+                "run_id": "run",
+            }
+            update_run_manifest(
+                path,
+                fixture_manifest_sha256="fixture-sha",
+                implementation="reference",
+                record={},
+                **arguments,
+            )
+            with self.assertRaises(ValueError):
+                update_run_manifest(
+                    path,
+                    fixture_manifest_sha256="changed",
+                    implementation="deepinv",
+                    record={},
+                    **arguments,
+                )
 
 
 if __name__ == "__main__":

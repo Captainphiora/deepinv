@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "id": "ffhq256_inpainting_ddim100_eta1_dsg_v1",
+  "algorithm": {
+    "name": "dsg",
+    "guidance_scale": 0.2,
+    "interval": 1
+  },
+  "task": {
+    "name": "inpainting",
+    "image_size": [3, 256, 256],
+    "batch_size": 1,
+    "mask_type": "random",
+    "measurement_noise_sigma": 0.05,
+    "noise_level": 0.05,
+    "value_range": [-1.0, 1.0]
+  },
+  "model": {
+    "name": "ffhq_10m",
+    "checkpoint_sha256": "81d535743156ec6be34d8668e6920da94f0614074d7793a16c8fa9e306237faa",
+    "model_input_type": "timestep",
+    "prediction_type": "epsilon",
+    "variance_type": "learned_range"
+  },
+  "sampler": {
+    "name": "ddim",
+    "train_steps": 1000,
+    "sampling_steps": 100,
+    "noise_schedule": "linear",
+    "beta_start": 0.0001,
+    "beta_end": 0.02,
+    "timestep_respacing": 100,
+    "eta": 1.0,
+    "clip_denoised": true,
+    "rescale_timesteps": true
+  },
+  "randomness": {
+    "fixture_seed": 42,
+    "measurement_seed": 42,
+    "x_init_seed": 42,
+    "transition_seed": 42,
+    "deterministic_algorithms": true,
+    "allow_tf32": false
+  },
+  "trajectory_probe_steps": [0, 1, 2, 50, 98, 99],
+  "thresholds": {
+    "trajectory_mae": 0.0003,
+    "trajectory_relative_l2": 0.001,
+    "per_case_delta_psnr_db": 0.1,
+    "per_case_delta_ssim": 0.002,
+    "per_case_delta_lpips": 0.005,
+    "mean_delta_psnr_db": 0.03,
+    "mean_delta_ssim": 0.0005,
+    "mean_delta_lpips": 0.002
+  },
+  "reference": {
+    "repository": "https://github.com/LingxiaoYang2023/DSG2024.git",
+    "compatibility_repository": "https://github.com/Captainphiora/DSG2024.git",
+    "upstream_commit": "b217c7a2463f9ebd68e12fe6b6d91344f195d1b8",
+    "compatibility_commit": "99b4e99c57886226fc852218286d951d65edab5e"
+  }
+}

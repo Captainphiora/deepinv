@@ -1,4 +1,4 @@
-"""Run pinned original DPS modules on a canonical fixture."""
+"""Run the pinned original DSG implementation on a canonical fixture."""
 
 from __future__ import annotations
 
@@ -11,7 +11,11 @@ from unittest import mock
 
 import torch
 
-from _common import (
+DPS_DIR = Path(__file__).resolve().parents[1] / "dps"
+if str(DPS_DIR) not in sys.path:
+    sys.path.insert(0, str(DPS_DIR))
+
+from _common import (  # noqa: E402
     artifact_root,
     command_line,
     configure_determinism,
@@ -20,8 +24,8 @@ from _common import (
     fixed_randn_like,
     fixture_dir,
     git_revision,
-    load_setting,
     load_record,
+    load_setting,
     read_json,
     requires_transition_noise,
     run_dir,
@@ -36,9 +40,15 @@ from _common import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--setting", required=True, help="setting JSON path or name")
-    parser.add_argument("--fixture-id", default="ffhq256_inpainting_v1")
+    parser.add_argument(
+        "--fixture-id", default="ffhq256_inpainting_ddim100_eta1_dsg_v1"
+    )
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--reference-repo", required=True)
+    parser.add_argument(
+        "--reference-repo",
+        required=True,
+        help="path to the DSG2024 Linear_Inverse_Problems directory",
+    )
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--case", action="append", help="case id; repeat as needed")
     parser.add_argument("--device", default="cuda:0")
@@ -48,14 +58,15 @@ def parse_args() -> argparse.Namespace:
 
 
 def verify_reference(repo: Path, commit: str) -> str:
+    if not (repo / "guided_diffusion").is_dir():
+        raise ValueError(
+            "--reference-repo must be the DSG2024 Linear_Inverse_Problems directory"
+        )
     actual = git_revision(repo)
-    diff = subprocess.run(
-        ["git", "-C", str(repo), "diff", "--quiet", commit, "--", "guided_diffusion"]
-    )
-    if diff.returncode != 0:
+    if actual != commit:
         raise RuntimeError(
-            "guided_diffusion differs from the pinned reference commit; "
-            "use a clean worktree"
+            f"DSG reference must be checked out at compatibility commit {commit}; "
+            f"got {actual}"
         )
     status = subprocess.run(
         [
@@ -67,13 +78,14 @@ def verify_reference(repo: Path, commit: str) -> str:
             "--untracked-files=all",
             "--",
             "guided_diffusion",
+            "util",
         ],
         check=True,
         capture_output=True,
         text=True,
-    ).stdout.splitlines()
-    if any(line.endswith(".py") for line in status):
-        raise RuntimeError("untracked Python files found under guided_diffusion")
+    ).stdout.strip()
+    if status:
+        raise RuntimeError("reference implementation is dirty:\n" + status)
     return actual
 
 
@@ -96,11 +108,13 @@ def import_reference(repo: Path):
 def main() -> None:
     args = parse_args()
     setting_file, setting = load_setting(args.setting)
+    if setting["algorithm"]["name"] != "dsg":
+        raise ValueError("DSG runner requires an algorithm.name of 'dsg'")
     setting_hash = file_sha256(setting_file)
     repo = Path(args.reference_repo).resolve()
     checkpoint = Path(args.checkpoint).resolve()
-    pinned_commit = setting["reference"]["commit"]
-    actual_commit = verify_reference(repo, pinned_commit)
+    compatibility_commit = setting["reference"]["compatibility_commit"]
+    actual_commit = verify_reference(repo, compatibility_commit)
     checkpoint_hash = file_sha256(checkpoint)
     if checkpoint_hash != setting["model"]["checkpoint_sha256"]:
         raise ValueError("checkpoint SHA256 does not match the setting")
@@ -113,7 +127,7 @@ def main() -> None:
     cases = select_cases(fixture_manifest, args.case)
     if not cases:
         raise ValueError("fixture contains no selected cases")
-    destination = run_dir(root, setting["id"], args.run_id)
+    destination = run_dir(root, setting["id"], args.run_id, "dsg")
     if args.dry_run:
         print(
             {
@@ -121,7 +135,7 @@ def main() -> None:
                 "fixture": args.fixture_id,
                 "cases": [case["id"] for case in cases],
                 "reference_commit": actual_commit,
-                "pinned_modules_commit": pinned_commit,
+                "upstream_commit": setting["reference"]["upstream_commit"],
                 "checkpoint_sha256": checkpoint_hash,
                 "destination": str(destination),
             }
@@ -135,7 +149,7 @@ def main() -> None:
         raise FileExistsError("this run already contains reference outputs")
 
     configure_determinism(setting["randomness"]["fixture_seed"])
-    create_model, create_sampler, get_operator, get_noise, get_conditioning_method = (
+    create_model, create_sampler, get_operator, get_noise, get_conditioner = (
         import_reference(repo)
     )
     device = torch.device(args.device)
@@ -162,8 +176,6 @@ def main() -> None:
     }
     with mock.patch.object(torch, "load", return_value=state_dict):
         model = create_model(**model_config)
-    # create_model catches load failures and otherwise falls back to random
-    # weights, so certify the checkpoint explicitly instead of trusting it.
     model.load_state_dict(state_dict, strict=True)
     model = model.to(device).eval()
 
@@ -176,15 +188,21 @@ def main() -> None:
         model_var_type=setting["model"]["variance_type"],
         dynamic_threshold=False,
         clip_denoised=sampler_config["clip_denoised"],
-        rescale_timesteps=False,
+        rescale_timesteps=sampler_config["rescale_timesteps"],
         timestep_respacing=sampler_config["timestep_respacing"],
+        eta=sampler_config["eta"],
     )
     operator = get_operator(name="inpainting", device=device)
     noiser = get_noise(
         name="gaussian", sigma=setting["task"]["measurement_noise_sigma"]
     )
-    conditioner = get_conditioning_method(
-        "ps", operator, noiser, scale=setting["algorithm"]["scale"]
+    algorithm_config = setting["algorithm"]
+    conditioner = get_conditioner(
+        "DSG",
+        operator,
+        noiser,
+        guidance_scale=algorithm_config["guidance_scale"],
+        interval=algorithm_config["interval"],
     )
     schedule = load_record(
         fixture,
@@ -201,36 +219,29 @@ def main() -> None:
         rtol=0,
         atol=1e-12,
     ):
-        raise ValueError(
-            "reference sampler noise levels differ from the fixture schedule"
-        )
-    probes = {-1, *setting["trajectory_probe_steps"]}
-    case_records = []
+        raise ValueError("reference sampler noise levels differ from the fixture")
 
+    probes = set(setting["trajectory_probe_steps"])
+    case_records = []
     for case in cases:
         case_id = case["id"]
-        tensors = load_record(
-            fixture,
-            case,
-            required=("measurement", "mask", "x_init"),
-        )
+        tensors = load_record(fixture, case, required=("measurement", "mask", "x_init"))
         measurement = tensors["measurement"].to(device)
         mask = tensors["mask"].to(device)
         image = tensors["x_init"].to(device)
-        if requires_transition_noise(setting):
-            noise_record = case.get("transition_noise")
-            if noise_record is None:
-                raise FileNotFoundError(
-                    "DDPM and DDIM eta>0 require an explicit transition-noise "
-                    "tape; rerun prepare_inputs with --with-transition-noise"
-                )
-            transition_noise = load_record(
-                fixture, noise_record, required=("transition_noise",)
-            )["transition_noise"]
-        else:  # DDIM eta=0: p_sample draws noise but multiplies it by zero.
-            transition_noise = torch.zeros(
-                (sampler.num_timesteps, *image.shape), dtype=image.dtype
+        if image.shape[0] != setting["task"]["batch_size"]:
+            raise ValueError(f"fixture batch size differs for case {case_id}")
+        if not requires_transition_noise(setting):
+            raise ValueError("the DSG eta=1 setting requires transition noise")
+        noise_record = case.get("transition_noise")
+        if noise_record is None:
+            raise FileNotFoundError(
+                "DSG DDIM eta>0 requires an explicit transition-noise tape; "
+                "rerun prepare_inputs with --with-transition-noise"
             )
+        transition_noise = load_record(
+            fixture, noise_record, required=("transition_noise",)
+        )["transition_noise"]
         if transition_noise.shape != (sampler.num_timesteps, *image.shape):
             raise ValueError(f"invalid transition-noise tape for case {case_id}")
 
@@ -245,19 +256,21 @@ def main() -> None:
             image = image.requires_grad_()
             draw, draw_count = fixed_randn_like(transition_noise[step])
             with mock.patch.object(torch, "randn_like", side_effect=draw):
-                if sampler_config["name"] == "ddim":
-                    prediction = sampler.p_sample(
-                        model, image, time, eta=sampler_config["eta"]
-                    )
-                else:
-                    prediction = sampler.p_sample(model, image, time)
+                prediction = sampler.p_sample(model, image, time)
             if draw_count() != 1:
-                raise RuntimeError("original p_sample did not request one noise tensor")
+                raise RuntimeError(
+                    "reference p_sample did not request one noise tensor"
+                )
             image, distance = conditioning(
                 x_t=prediction["sample"],
+                x_t_mean=prediction["mean"],
                 measurement=measurement,
+                noisy_measurement=None,
                 x_prev=image,
                 x_0_hat=prediction["pred_xstart"],
+                sigma_t=prediction["sigma_t"],
+                idx=sampler_index,
+                func=prediction["func"],
             )
             image = image.detach()
             distances.append(distance.detach().cpu())
@@ -294,7 +307,8 @@ def main() -> None:
             "environment": environment(args.device),
             "repository": str(repo),
             "revision": actual_commit,
-            "pinned_modules_revision": pinned_commit,
+            "compatibility_revision": compatibility_commit,
+            "upstream_revision": setting["reference"]["upstream_commit"],
             "checkpoint_sha256": checkpoint_hash,
             "cases": case_records,
         },

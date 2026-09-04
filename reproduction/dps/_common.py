@@ -134,6 +134,20 @@ def configure_determinism(seed: int) -> None:
 
 def environment(device: str) -> dict:
     cudnn = torch.backends.cudnn.version()
+    requested_device = torch.device(device)
+    gpu = None
+    if requested_device.type == "cuda" and torch.cuda.is_available():
+        index = (
+            torch.cuda.current_device()
+            if requested_device.index is None
+            else requested_device.index
+        )
+        properties = torch.cuda.get_device_properties(index)
+        uuid = getattr(properties, "uuid", None)
+        gpu = {
+            "name": properties.name,
+            "uuid": str(uuid) if uuid is not None else None,
+        }
     return {
         "python": platform.python_version(),
         "torch": torch.__version__,
@@ -141,6 +155,7 @@ def environment(device: str) -> dict:
         "cuda": torch.version.cuda,
         "cudnn": str(cudnn) if cudnn is not None else None,
         "device": device,
+        "gpu": gpu,
         "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
         "cudnn_benchmark": torch.backends.cudnn.benchmark,
         "cuda_matmul_allow_tf32": torch.backends.cuda.matmul.allow_tf32,
@@ -190,7 +205,11 @@ def setting_path(value: str) -> Path:
     candidates = [path]
     if not path.is_absolute():
         candidates.extend(
-            [REPO_ROOT / path, Path(__file__).resolve().parent / "settings" / path]
+            [
+                REPO_ROOT / path,
+                Path(__file__).resolve().parent / "settings" / path,
+                *sorted((REPO_ROOT / "reproduction").glob(f"*/settings/{path.name}")),
+            ]
         )
     for candidate in candidates:
         if candidate.exists():
@@ -223,8 +242,10 @@ def fixture_dir(root: Path, fixture_id: str) -> Path:
     return root / "fixtures" / fixture_id
 
 
-def run_dir(root: Path, setting_id: str, run_id: str) -> Path:
-    return root / "runs" / "dps" / setting_id / run_id
+def run_dir(
+    root: Path, setting_id: str, run_id: str, algorithm: str = "dps"
+) -> Path:
+    return root / "runs" / algorithm / setting_id / run_id
 
 
 def requires_transition_noise(setting: dict) -> bool:
@@ -232,6 +253,24 @@ def requires_transition_noise(setting: dict) -> bool:
     return sampler["name"] == "ddpm" or (
         sampler["name"] == "ddim" and float(sampler["eta"]) > 0
     )
+
+
+def fixed_randn_like(noise: torch.Tensor):
+    """Return a one-shot ``torch.randn_like`` replacement for a fixed tape."""
+    calls = 0
+
+    def draw(target: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+        nonlocal calls
+        calls += 1
+        if calls != 1:
+            raise RuntimeError("reference p_sample requested more than one noise tensor")
+        if args or kwargs:
+            raise RuntimeError("unexpected torch.randn_like arguments")
+        if noise.shape != target.shape:
+            raise ValueError(f"transition-noise shape {noise.shape} != {target.shape}")
+        return noise.to(device=target.device, dtype=target.dtype)
+
+    return draw, lambda: calls
 
 
 def select_cases(manifest: dict, selected: list[str] | None) -> list[dict]:
@@ -251,6 +290,7 @@ def update_run_manifest(
     setting_id: str,
     setting_sha256: str,
     fixture_id: str,
+    fixture_manifest_sha256: str,
     run_id: str,
     implementation: str,
     record: dict,
@@ -264,6 +304,7 @@ def update_run_manifest(
             "setting_id": setting_id,
             "setting_sha256": setting_sha256,
             "fixture_id": fixture_id,
+            "fixture_manifest_sha256": fixture_manifest_sha256,
             "run_id": run_id,
             "implementations": {},
         }
@@ -272,6 +313,7 @@ def update_run_manifest(
         "setting_id": setting_id,
         "setting_sha256": setting_sha256,
         "fixture_id": fixture_id,
+        "fixture_manifest_sha256": fixture_manifest_sha256,
         "run_id": run_id,
     }.items():
         if manifest.get(key) != expected:

@@ -958,7 +958,8 @@ class DSG(DiscreteDPS):
     This reproduces the discrete DDPM/DDIM implementation from the original
     DSG repository. At selected reverse steps, the sampled direction is mixed
     with the normalized measurement-gradient direction and projected back onto
-    the transition sphere.
+    the transition sphere. Exact reference compatibility is defined for the
+    original implementation's batch size of one.
 
     :param torch.nn.Module model: wrapped epsilon-prediction diffusion model.
     :param float guidance_scale: mixing weight for the guidance direction.

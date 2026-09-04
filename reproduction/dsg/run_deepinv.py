@@ -1,4 +1,4 @@
-"""Run DeepInv DiscreteDPS on a canonical fixture."""
+"""Run DeepInv DSG on a canonical fixture."""
 
 from __future__ import annotations
 
@@ -9,7 +9,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from _common import (
+DPS_DIR = Path(__file__).resolve().parents[1] / "dps"
+if str(DPS_DIR) not in sys.path:
+    sys.path.insert(0, str(DPS_DIR))
+
+from _common import (  # noqa: E402
     REPO_ROOT,
     artifact_root,
     command_line,
@@ -18,8 +22,8 @@ from _common import (
     file_sha256,
     fixture_dir,
     git_revision,
-    load_setting,
     load_record,
+    load_setting,
     read_json,
     require_clean_repo,
     requires_transition_noise,
@@ -35,7 +39,9 @@ from _common import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--setting", required=True, help="setting JSON path or name")
-    parser.add_argument("--fixture-id", default="ffhq256_inpainting_v1")
+    parser.add_argument(
+        "--fixture-id", default="ffhq256_inpainting_ddim100_eta1_dsg_v1"
+    )
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--case", action="append", help="case id; repeat as needed")
@@ -58,7 +64,10 @@ def build_algorithm(setting: dict, checkpoint: Path, device: torch.device):
         "sqrt_1m_alphas_cumprod",
         "sqrt_alphas_cumprod",
     }
-    if set(incompatible.missing_keys) != expected_missing or incompatible.unexpected_keys:
+    if (
+        set(incompatible.missing_keys) != expected_missing
+        or incompatible.unexpected_keys
+    ):
         raise ValueError(
             "checkpoint does not match DiffUNet: "
             f"missing={incompatible.missing_keys}, "
@@ -67,6 +76,11 @@ def build_algorithm(setting: dict, checkpoint: Path, device: torch.device):
     score_model = score_model.to(device).eval()
 
     sampler = setting["sampler"]
+    if sampler["rescale_timesteps"] and sampler["train_steps"] != 1000:
+        raise ValueError(
+            "DeepInv alignment only supports identity timestep rescaling "
+            "(train_steps=1000)"
+        )
     betas = np.linspace(
         sampler["beta_start"],
         sampler["beta_end"],
@@ -88,13 +102,15 @@ def build_algorithm(setting: dict, checkpoint: Path, device: torch.device):
     rng = torch.Generator(device=device).manual_seed(
         setting["randomness"]["transition_seed"]
     )
-    return dinv.sampling.DiscreteDPS(
+    algorithm = setting["algorithm"]
+    return dinv.sampling.DSG(
         wrapped_model,
         sampler=sampler["name"],
         betas=betas,
         timestep_respacing=sampler["timestep_respacing"],
         eta=sampler["eta"],
-        scale=setting["algorithm"]["scale"],
+        guidance_scale=algorithm["guidance_scale"],
+        interval=algorithm["interval"],
         clip_denoised=sampler["clip_denoised"],
         rng=rng,
         verbose=True,
@@ -104,6 +120,8 @@ def build_algorithm(setting: dict, checkpoint: Path, device: torch.device):
 def main() -> None:
     args = parse_args()
     setting_file, setting = load_setting(args.setting)
+    if setting["algorithm"]["name"] != "dsg":
+        raise ValueError("DSG runner requires an algorithm.name of 'dsg'")
     setting_hash = file_sha256(setting_file)
     checkpoint = Path(args.checkpoint).resolve()
     checkpoint_hash = file_sha256(checkpoint)
@@ -118,7 +136,7 @@ def main() -> None:
     cases = select_cases(fixture_manifest, args.case)
     if not cases:
         raise ValueError("fixture contains no selected cases")
-    destination = run_dir(root, setting["id"], args.run_id)
+    destination = run_dir(root, setting["id"], args.run_id, "dsg")
     revision = git_revision(REPO_ROOT)
     if args.dry_run:
         print(
@@ -139,6 +157,7 @@ def main() -> None:
             "deepinv/sampling/diffusion.py",
             "deepinv/sampling/__init__.py",
             "reproduction/dps",
+            "reproduction/dsg",
         ),
     )
     if args.device.startswith("cuda") and not torch.cuda.is_available():
@@ -168,40 +187,32 @@ def main() -> None:
         rtol=0,
         atol=1e-12,
     ):
-        raise ValueError(
-            "DeepInv sampler noise levels differ from the fixture schedule"
-        )
+        raise ValueError("DeepInv sampler noise levels differ from the fixture")
+
     probes = setting["trajectory_probe_steps"]
-    sampler = setting["sampler"]
     case_records = []
     for case in cases:
         case_id = case["id"]
-        tensors = load_record(
-            fixture,
-            case,
-            required=("measurement", "mask", "x_init"),
-        )
+        tensors = load_record(fixture, case, required=("measurement", "mask", "x_init"))
         measurement = tensors["measurement"].to(device)
         mask = tensors["mask"].to(device)
         x_init = tensors["x_init"].to(device)
+        if x_init.shape[0] != setting["task"]["batch_size"]:
+            raise ValueError(f"fixture batch size differs for case {case_id}")
         physics = dinv.physics.Inpainting(
             img_size=tuple(x_init.shape[1:]), mask=mask, device=device
         )
-        transition_noise = None
-        if requires_transition_noise(setting):
-            noise_record = case.get("transition_noise")
-            if noise_record is None:
-                raise FileNotFoundError(
-                    "DDPM and DDIM eta>0 require an explicit transition-noise "
-                    "tape; rerun prepare_inputs with --with-transition-noise"
-                )
-            transition_noise = load_record(
-                fixture, noise_record, required=("transition_noise",)
-            )["transition_noise"]
-        else:  # DDIM eta=0: use the same explicit zero tape as the reference.
-            transition_noise = torch.zeros(
-                (algorithm.num_timesteps, *x_init.shape), dtype=x_init.dtype
+        if not requires_transition_noise(setting):
+            raise ValueError("the DSG eta=1 setting requires transition noise")
+        noise_record = case.get("transition_noise")
+        if noise_record is None:
+            raise FileNotFoundError(
+                "DSG DDIM eta>0 requires an explicit transition-noise tape; "
+                "rerun prepare_inputs with --with-transition-noise"
             )
+        transition_noise = load_record(
+            fixture, noise_record, required=("transition_noise",)
+        )["transition_noise"]
 
         reconstruction, full_trajectory = algorithm(
             measurement,

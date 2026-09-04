@@ -430,6 +430,45 @@ def test_dsg_interval_skip():
     )
 
 
+def test_dsg_forward_ddim_fixed_tape_trajectory_and_interval():
+    dsg = DSG(
+        _DiscretePrediction(epsilon=0.1, variance=0.0),
+        guidance_scale=0.4,
+        interval=2,
+        sampler="ddim",
+        eta=1.0,
+        betas=np.array([0.05, 0.1, 0.15, 0.2]),
+        timestep_respacing=4,
+        clip_denoised=False,
+    )
+    physics = _IdentityPhysics()
+    y = torch.zeros(1, 1, 1, 2)
+    x_init = torch.tensor([[[[0.3, -0.2]]]])
+    tape = torch.tensor(
+        [[0.2, -0.1], [-0.3, 0.4], [0.5, 0.1], [-0.2, -0.4]]
+    ).reshape(4, 1, 1, 1, 2)
+
+    expected = [x_init]
+    x = x_init
+    for tape_idx, step in enumerate((3, 2, 1, 0)):
+        x_prev = x.detach().requires_grad_(True)
+        out = dsg.p_sample(x_prev, step, noise=tape[tape_idx])
+        x = dsg._condition_step(out, x_prev, y, physics, step).detach()
+        expected.append(x)
+
+    actual, trajectory = dsg(
+        y,
+        physics,
+        x_init=x_init,
+        seed=123,
+        transition_noise=tape,
+        get_trajectory=True,
+    )
+    expected = torch.stack(expected)
+    torch.testing.assert_close(trajectory, expected, rtol=0, atol=0)
+    torch.testing.assert_close(actual, expected[-1], rtol=0, atol=0)
+
+
 @pytest.mark.parametrize("interval", [0, -1, 1.5, True])
 def test_dsg_invalid_interval(interval):
     with pytest.raises(ValueError, match="positive integer"):

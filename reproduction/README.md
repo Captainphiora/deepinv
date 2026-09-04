@@ -42,4 +42,5 @@ and reference notes. Do not copy an original implementation into DeepInv or
 add a framework abstraction until a second working reproduction proves it is
 needed.
 
-See [`dps/README.md`](dps/README.md) for the first concrete workflow.
+See [`dps/README.md`](dps/README.md) and [`dsg/README.md`](dsg/README.md) for
+concrete workflows.

@@ -1,4 +1,4 @@
-"""Compare reference and DeepInv DPS tensor artifacts without image round trips."""
+"""Compare reference and DeepInv tensor artifacts without image round trips."""
 
 from __future__ import annotations
 
@@ -85,7 +85,9 @@ def main() -> None:
     cases = select_cases(manifest, args.case)
     if not cases:
         raise ValueError("fixture contains no selected cases")
-    output_dir = run_dir(root, setting["id"], args.run_id)
+    output_dir = run_dir(
+        root, setting["id"], args.run_id, setting["algorithm"]["name"]
+    )
     output_path = output_dir / "comparison.json"
     if args.dry_run:
         print(
@@ -107,17 +109,29 @@ def main() -> None:
         raise ValueError("run manifest uses a different setting")
     if run_manifest.get("setting_sha256") != file_sha256(setting_file):
         raise ValueError("setting JSON changed after the run")
+    if run_manifest.get("fixture_manifest_sha256") != file_sha256(
+        fixture / "manifest.json"
+    ):
+        raise ValueError("fixture manifest changed after the run")
+
+    implementations = run_manifest.get("implementations", {})
+    reference_environment = implementations.get("reference", {}).get("environment")
+    deepinv_environment = implementations.get("deepinv", {}).get("environment")
+    if not reference_environment or reference_environment != deepinv_environment:
+        raise ValueError(
+            "reference and DeepInv must run in the same environment and on the same device"
+        )
 
     import lpips
 
     lpips_metric = lpips.LPIPS(net="vgg").to(args.metric_device).eval()
     reference_records = {
         record["id"]: record
-        for record in run_manifest["implementations"]["reference"]["cases"]
+        for record in implementations["reference"]["cases"]
     }
     deepinv_records = {
         record["id"]: record
-        for record in run_manifest["implementations"]["deepinv"]["cases"]
+        for record in implementations["deepinv"]["cases"]
     }
 
     thresholds = setting["thresholds"]
