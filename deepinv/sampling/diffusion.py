@@ -260,6 +260,14 @@ class DiffPIR(Reconstructor):
     :param float lambda_: hyperparameter :math:`\lambda` for the data fidelity step
         (:math:`\rho_t = \lambda \frac{\sigma_n^2}{\bar{\sigma}_t^2}` in the paper where the optimal value range
         between 3.0 and 25.0 depending on the problem). Default: ``7.0``.
+    :param float guidance_scale: relaxation applied after the data-fidelity
+        proximal step. Default: ``1.0``.
+    :param float eta: DDIM stochasticity used by the official transition.
+        Only ``0.0`` is currently supported. Default: ``0.0``.
+    :param torch.Tensor betas: optional explicit training beta schedule.
+    :param torch.Tensor alphas_cumprod: optional explicit cumulative alpha
+        schedule. This is useful when reproducing an external implementation's
+        precomputed schedule without changing the Torch algorithm.
     :param bool verbose: if ``True``, print progress
     :param str device: the device to use for the computations
 
@@ -296,18 +304,34 @@ class DiffPIR(Reconstructor):
         lambda_=7.0,
         verbose=False,
         device="cpu",
+        guidance_scale=1.0,
+        eta=0.0,
+        betas=None,
+        alphas_cumprod=None,
     ):
         super().__init__()
         self.model = model
         self.lambda_ = lambda_
+        self.guidance_scale = guidance_scale
         self.data_fidelity = data_fidelity
         self.max_iter = max_iter
         self.zeta = zeta
+        self.eta = eta
         self.verbose = verbose
         self.device = device
         self.beta_start, self.beta_end = 0.1 / 1000, 20 / 1000
         self.num_train_timesteps = 1000
         self.sigma = sigma
+        self._betas = betas
+        self._alphas_cumprod = alphas_cumprod
+
+        if not 0 <= zeta <= 1:
+            raise ValueError("zeta must be between 0 and 1")
+        if eta != 0:
+            raise NotImplementedError(
+                "DiffPIR currently supports eta=0 only; non-zero eta needs a "
+                "second explicit transition-noise stream"
+            )
 
         (
             self.sqrt_1m_alphas_cumprod,
@@ -324,15 +348,27 @@ class DiffPIR(Reconstructor):
         """
         Get the alpha and beta sequences for the algorithm. This is necessary for mapping noise levels to timesteps.
         """
-        betas = torch.linspace(
-            self.beta_start,
-            self.beta_end,
-            self.num_train_timesteps,
-            dtype=torch.float32,
-            device=self.device,
+        betas = (
+            torch.linspace(
+                self.beta_start,
+                self.beta_end,
+                self.num_train_timesteps,
+                dtype=torch.float32,
+            )
+            if self._betas is None
+            else torch.as_tensor(self._betas, dtype=torch.float32).cpu()
         )
-        alphas = 1.0 - betas
-        alphas_cumprod = torch.cumprod(alphas, axis=0)  # This is \overline{\alpha}_t
+        if betas.shape != (self.num_train_timesteps,):
+            raise ValueError("betas must have shape (num_train_timesteps,)")
+        alphas_cumprod = (
+            torch.cumprod(1.0 - betas, dim=0)
+            if self._alphas_cumprod is None
+            else torch.as_tensor(self._alphas_cumprod, dtype=torch.float32).cpu()
+        )
+        if alphas_cumprod.shape != (self.num_train_timesteps,):
+            raise ValueError(
+                "alphas_cumprod must have shape (num_train_timesteps,)"
+            )
 
         # Useful sequences deriving from alphas_cumprod
         sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
@@ -343,7 +379,7 @@ class DiffPIR(Reconstructor):
         sqrt_recip_alphas_cumprod = torch.sqrt(1.0 / alphas_cumprod)
         sqrt_recipm1_alphas_cumprod = torch.sqrt(1.0 / alphas_cumprod - 1)
 
-        return (
+        schedules = (
             sqrt_1m_alphas_cumprod,
             reduced_alpha_cumprod,
             sqrt_alphas_cumprod,
@@ -351,31 +387,22 @@ class DiffPIR(Reconstructor):
             sqrt_recipm1_alphas_cumprod,
             betas,
         )
+        return tuple(value.to(self.device) for value in schedules)
 
     def get_noise_schedule(self, sigma):
         """
         Get the noise schedule for the algorithm.
         """
-        lambda_ = self.lambda_
-        sigmas = []
-        sigma_ks = []
-        rhos = []
-        for i in range(self.num_train_timesteps):
-            sigmas.append(self.reduced_alpha_cumprod[self.num_train_timesteps - 1 - i])
-            sigma_ks.append(
-                (self.sqrt_1m_alphas_cumprod[i] / self.sqrt_alphas_cumprod[i])
-            )
-            rhos.append(lambda_ * (sigma**2) / (sigma_ks[i] ** 2))
-        rhos, sigmas = (
-            torch.tensor(rhos).to(self.device),
-            torch.tensor(sigmas).to(self.device),
-        )
+        sigma = torch.as_tensor(sigma).cpu()
+        reduced = self.reduced_alpha_cumprod.cpu()
+        rhos = (self.lambda_ * sigma**2 / reduced**2).to(self.device)
+        sigmas = reduced.flip(0).to(self.device)
 
         seq = torch.sqrt(
             torch.linspace(
-                0.0, self.num_train_timesteps**2, self.max_iter, device=self.device
+                0, self.num_train_timesteps**2, self.max_iter, dtype=torch.float64
             )
-        ).type(torch.int32)
+        ).to(dtype=torch.int64, device=self.device)
         seq[-1] = seq[-1] - 1
 
         return rhos, sigmas, seq
@@ -406,11 +433,10 @@ class DiffPIR(Reconstructor):
             beta_start,
             beta_end,
             num_train_timesteps,
-            dtype=torch.float32,
+            dtype=torch.float64,
             device=self.device,
         )
-        alphas = 1.0 - betas
-        alphas_cumprod = torch.cumprod(alphas, axis=0)  # This is \overline{\alpha}_t
+        alphas_cumprod = torch.cumprod(1.0 - betas, dim=0)
 
         # Useful sequences deriving from alphas_cumprod
         sqrt_recip_alphas_cumprod = torch.sqrt(1.0 / alphas_cumprod)
@@ -426,6 +452,9 @@ class DiffPIR(Reconstructor):
         physics: dinv.physics.LinearPhysics,
         seed=None,
         x_init=None,
+        initial_state=None,
+        transition_noise=None,
+        get_trajectory=False,
     ):
         r"""
         Runs the diffusion to obtain a random sample of the posterior distribution.
@@ -434,23 +463,53 @@ class DiffPIR(Reconstructor):
         :param deepinv.physics.LinearPhysics physics: the physics operator.
         :param float sigma: the noise level of the data.
         :param int seed: the seed for the random number generator.
-        :param torch.Tensor x_init: the initial guess for the reconstruction.
+        :param torch.Tensor x_init: an initial image estimate in ``[0, 1]``.
+        :param torch.Tensor initial_state: an already noised initial diffusion
+            state in ``[-1, 1]``. When provided, no initialization noise is drawn.
+        :param torch.Tensor transition_noise: fixed noise tape of shape
+            ``(max_iter - 1, *initial_state.shape)``.
+        :param bool get_trajectory: return all internal diffusion states in
+            addition to the reconstruction.
         """
-
-        if seed:
-            torch.manual_seed(seed)
 
         if hasattr(physics.noise_model, "sigma"):
             sigma = physics.noise_model.sigma  # Then we overwrite the default values
             self.rhos, self.sigmas, self.seq = self.get_noise_schedule(sigma=sigma)
 
-        # Initialization
-        if x_init is None:  # Necessary when x and y don't live in the same space
-            x = 2 * physics.A_adjoint(y) - 1
+        generator = None
+        if seed is not None:
+            generator = torch.Generator(device=y.device).manual_seed(seed)
+
+        def randn_like(value):
+            if generator is None:
+                return torch.randn_like(value)
+            return torch.randn(
+                value.shape,
+                dtype=value.dtype,
+                device=value.device,
+                generator=generator,
+            )
+
+        if initial_state is not None:
+            x = initial_state.to(device=y.device, dtype=y.dtype).clone()
         else:
-            x = 2 * x_init - 1
+            base = physics.A_adjoint(y) if x_init is None else x_init
+            base = base.to(device=y.device, dtype=y.dtype)
+            x = (
+                self.sqrt_alphas_cumprod[-1] * (2 * base - 1)
+                + self.sqrt_1m_alphas_cumprod[-1] * randn_like(base)
+            )
+
+        if transition_noise is not None:
+            expected = (len(self.seq) - 1, *x.shape)
+            if tuple(transition_noise.shape) != expected:
+                raise ValueError(
+                    f"transition_noise has shape {tuple(transition_noise.shape)}, "
+                    f"expected {expected}"
+                )
 
         sqrt_recip_alphas_cumprod, sqrt_recipm1_alphas_cumprod = self.get_alpha_prod()
+        trajectory = [x.detach().clone()]
 
         with torch.no_grad():
             for i in tqdm(range(len(self.seq)), disable=(not self.verbose)):
@@ -461,30 +520,32 @@ class DiffPIR(Reconstructor):
                 t_i = self.find_nearest(self.reduced_alpha_cumprod, curr_sigma)
                 at = 1 / sqrt_recip_alphas_cumprod[t_i] ** 2
 
-                if (
-                    i == 0
-                ):  # Initialization (simpler than the original code, may be suboptimal)
-                    x = (
-                        x
-                        + (curr_sigma**2 - 4.0 * self.sigma**2).sqrt()
-                        * torch.randn_like(x)
-                    ) / sqrt_recip_alphas_cumprod[-1]
-
-                sigma_cur = curr_sigma
-
                 # Denoising step
-                x_aux = x / (2 * at.sqrt()) + 0.5  # renormalize in [0, 1]
-                out = self.model(x_aux, sigma_cur / 2)
-                denoised = 2 * out - 1
-                x0 = denoised.clamp(-1, 1)
+                if hasattr(self.model, "predict"):
+                    epsilon, _ = self.model.predict(
+                        x,
+                        t_i,
+                        condition_type="timestep",
+                        output_type="epsilon",
+                        input_in_minus_one_one=True,
+                    )
+                    x0 = (
+                        sqrt_recip_alphas_cumprod[t_i].to(x.dtype) * x
+                        - sqrt_recipm1_alphas_cumprod[t_i].to(x.dtype) * epsilon
+                    ).clamp(-1, 1)
+                else:
+                    x_aux = x / (2 * at.sqrt()) + 0.5
+                    out = self.model(x_aux, curr_sigma / 2)
+                    x0 = (2 * out - 1).clamp(-1, 1)
 
                 if not self.seq[i] == self.seq[-1]:
                     # Data fidelity step
                     x0_p = x0 / 2 + 0.5
                     x0_p = self.data_fidelity.prox(
-                        x0_p, y, physics, gamma=1.0 / (2 * self.rhos[t_i])
+                        x0_p, y, physics, gamma=1.0 / self.rhos[t_i]
                     )
-                    x0 = x0_p * 2 - 1
+                    guided_x0 = x0_p * 2 - 1
+                    x0 = x0 + self.guidance_scale * (guided_x0 - x0)
 
                     # Sampling step
                     t_im1 = self.find_nearest(
@@ -498,6 +559,11 @@ class DiffPIR(Reconstructor):
                         t_i
                     ]  # effective noise
 
+                    noise = (
+                        transition_noise[i].to(device=x.device, dtype=x.dtype)
+                        if transition_noise is not None
+                        else randn_like(x)
+                    )
                     x = (
                         self.sqrt_alphas_cumprod[t_im1] * x0
                         + self.sqrt_1m_alphas_cumprod[t_im1]
@@ -505,11 +571,15 @@ class DiffPIR(Reconstructor):
                         * eps
                         + self.sqrt_1m_alphas_cumprod[t_im1]
                         * self.zeta**0.5
-                        * torch.randn_like(x)
+                        * noise
                     )  # sampling
+
+                trajectory.append(x.detach().clone())
 
         out = x / 2 + 0.5  # back to [0, 1] range
 
+        if get_trajectory:
+            return out, torch.stack(trajectory)
         return out
 
 

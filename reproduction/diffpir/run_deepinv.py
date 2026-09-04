@@ -1,0 +1,247 @@
+"""Run DeepInv DiffPIR on the same immutable official-style fixture."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+import torch
+
+DPS_DIR = Path(__file__).resolve().parents[1] / "dps"
+if str(DPS_DIR) not in sys.path:
+    sys.path.insert(0, str(DPS_DIR))
+
+from _common import (  # noqa: E402
+    REPO_ROOT,
+    artifact_root,
+    command_line,
+    configure_determinism,
+    environment,
+    file_sha256,
+    fixture_dir,
+    git_revision,
+    load_record,
+    load_setting,
+    read_json,
+    require_clean_repo,
+    run_dir,
+    save_tensors,
+    select_cases,
+    update_run_manifest,
+    utc_now,
+    validate_tensor_dict,
+)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--setting", required=True)
+    parser.add_argument(
+        "--fixture-id", default="ffhq256_inpainting_diffpir_quad20_v1"
+    )
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--case", action="append")
+    parser.add_argument("--device", default="cuda:1")
+    parser.add_argument("--artifact-root")
+    parser.add_argument("--dry-run", action="store_true")
+    return parser.parse_args()
+
+
+def build_algorithm(
+    setting: dict, checkpoint: Path, schedule: dict, device: torch.device
+):
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    import deepinv as dinv
+
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    validate_tensor_dict(state)
+    score_model = dinv.models.DiffUNet(pretrained=None)
+    incompatible = score_model.load_state_dict(state, strict=False)
+    expected_missing = {"sqrt_1m_alphas_cumprod", "sqrt_alphas_cumprod"}
+    if set(incompatible.missing_keys) != expected_missing or incompatible.unexpected_keys:
+        raise ValueError(
+            f"checkpoint does not match DiffUNet: {incompatible.missing_keys}, "
+            f"{incompatible.unexpected_keys}"
+        )
+    score_model = score_model.to(device).eval()
+
+    sampler = setting["sampler"]
+    model_alpha = schedule["model_alpha_cumprod"]
+    wrapped = dinv.models.ScoreModelWrapper(
+        score_model,
+        prediction_type=setting["model"]["prediction_type"],
+        model_input_type=setting["model"]["model_input_type"],
+        variance_type=setting["model"]["variance_type"],
+        model_kwargs={"type_t": "timestep"},
+        sigma_t=torch.sqrt((1 - model_alpha) / model_alpha).float(),
+        scale_t=torch.sqrt(model_alpha).float(),
+        n_timesteps=sampler["train_steps"],
+        device=device,
+    )
+    return dinv.sampling.DiffPIR(
+        wrapped,
+        dinv.optim.data_fidelity.L2(),
+        sigma=setting["task"]["algorithm_sigma"],
+        max_iter=sampler["sampling_steps"],
+        zeta=sampler["zeta"],
+        lambda_=setting["algorithm"]["lambda_"],
+        guidance_scale=setting["algorithm"]["guidance_scale"],
+        eta=sampler["eta"],
+        betas=schedule["betas"],
+        alphas_cumprod=schedule["alpha_cumprod"],
+        verbose=True,
+        device=device,
+    )
+
+
+def main() -> None:
+    args = parse_args()
+    setting_file, setting = load_setting(args.setting)
+    if setting["algorithm"]["name"] != "diffpir":
+        raise ValueError("DiffPIR runner requires algorithm.name='diffpir'")
+    checkpoint = Path(args.checkpoint).resolve()
+    checkpoint_hash = file_sha256(checkpoint)
+    if checkpoint_hash != setting["model"]["checkpoint_sha256"]:
+        raise ValueError("checkpoint SHA256 does not match the setting")
+
+    root = artifact_root(args.artifact_root)
+    fixture = fixture_dir(root, args.fixture_id)
+    fixture_manifest_path = fixture / "manifest.json"
+    fixture_manifest = read_json(fixture_manifest_path)
+    cases = select_cases(fixture_manifest, args.case)
+    destination = run_dir(root, setting["id"], args.run_id, "diffpir")
+    revision = git_revision(REPO_ROOT)
+    if args.dry_run:
+        print(
+            {
+                "setting": setting["id"],
+                "fixture": args.fixture_id,
+                "cases": [case["id"] for case in cases],
+                "deepinv_revision": revision,
+                "destination": str(destination),
+            }
+        )
+        return
+    require_clean_repo(
+        REPO_ROOT,
+        (
+            "deepinv/models/wrapper.py",
+            "deepinv/sampling/diffusion.py",
+            "deepinv/sampling/__init__.py",
+            "reproduction/dps",
+            "reproduction/diffpir",
+        ),
+    )
+    if args.device.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError("CUDA device requested but CUDA is unavailable")
+    if (destination / "manifest.json").exists() and "deepinv" in read_json(
+        destination / "manifest.json"
+    ).get("implementations", {}):
+        raise FileExistsError("this run already contains DeepInv outputs")
+
+    configure_determinism(setting["randomness"]["fixture_seed"])
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    import deepinv as dinv
+
+    device = torch.device(args.device)
+    schedule = load_record(
+        fixture,
+        fixture_manifest["schedule"],
+        required=(
+            "sampled_timesteps",
+            "betas",
+            "alpha_cumprod",
+            "model_alpha_cumprod",
+            "noise_levels",
+        ),
+    )
+    algorithm = build_algorithm(setting, checkpoint, schedule, device)
+    sampled_timesteps = torch.stack(
+        [
+            algorithm.find_nearest(
+                algorithm.reduced_alpha_cumprod,
+                algorithm.sigmas[index],
+            )
+            for index in algorithm.seq
+        ]
+    ).to(dtype=torch.int64, device="cpu")
+    if not torch.equal(sampled_timesteps, schedule["sampled_timesteps"]):
+        raise ValueError("DeepInv sampled timesteps differ from the fixture")
+    sampled_noise_levels = algorithm.reduced_alpha_cumprod[
+        sampled_timesteps.to(device)
+    ].cpu()
+    expected_noise_levels = schedule["noise_levels"][sampled_timesteps]
+    if not torch.equal(sampled_noise_levels, expected_noise_levels):
+        raise ValueError("DeepInv noise levels differ from the fixture")
+
+    probes = setting["trajectory_probe_steps"]
+    case_records = []
+    for case in cases:
+        case_id = case["id"]
+        tensors = load_record(
+            fixture, case, required=("measurement", "mask", "x_init")
+        )
+        y = tensors["measurement"].to(device)
+        mask = tensors["mask"].to(device)
+        initial_state = tensors["x_init"].to(device)
+        transition_noise = load_record(
+            fixture,
+            case["transition_noise"],
+            required=("transition_noise",),
+        )["transition_noise"]
+        physics = dinv.physics.Inpainting(
+            img_size=tuple(initial_state.shape[1:]), mask=mask, device=device
+        )
+        reconstruction, full_trajectory = algorithm(
+            y,
+            physics,
+            initial_state=initial_state,
+            transition_noise=transition_noise,
+            get_trajectory=True,
+        )
+        trajectory_indices = torch.tensor([0, *(step + 1 for step in probes)])
+        output = {
+            "reconstruction": reconstruction.detach().cpu().mul(2).sub(1),
+            "trajectory": full_trajectory[trajectory_indices].detach().cpu(),
+            "trajectory_steps": torch.tensor([-1, *probes], dtype=torch.int64),
+            "timesteps": sampled_timesteps,
+            "noise_levels": sampled_noise_levels,
+        }
+        output_path = destination / "cases" / case_id / "deepinv.pt"
+        record = save_tensors(output_path, output)
+        record.update(
+            {
+                "id": case_id,
+                "path": str(output_path.relative_to(destination)),
+                "fixture_tensor_sha256": case["tensor_sha256"],
+            }
+        )
+        case_records.append(record)
+
+    update_run_manifest(
+        destination / "manifest.json",
+        setting_id=setting["id"],
+        setting_sha256=file_sha256(setting_file),
+        fixture_id=args.fixture_id,
+        fixture_manifest_sha256=file_sha256(fixture_manifest_path),
+        run_id=args.run_id,
+        implementation="deepinv",
+        record={
+            "created_at": utc_now(),
+            "command": command_line(),
+            "repository": str(REPO_ROOT),
+            "revision": revision,
+            "checkpoint_sha256": checkpoint_hash,
+            "environment": environment(args.device),
+            "cases": case_records,
+        },
+    )
+    print(destination / "manifest.json")
+
+
+if __name__ == "__main__":
+    main()
