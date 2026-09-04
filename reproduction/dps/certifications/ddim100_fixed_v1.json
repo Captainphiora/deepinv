@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "status": "PASS",
+  "setting": {
+    "id": "ffhq256_inpainting_ddim100_eta0_v1",
+    "sha256": "24abcf774a0f0e8e0673f6c392abcdfd7adecefba4cb53c1d90868c2b007eae9"
+  },
+  "fixture": {
+    "id": "ffhq256_inpainting_v1",
+    "manifest_sha256": "489637ae7fd2ddb73c738958f3822c880a1360a2e114ab4939126ea7fde43648"
+  },
+  "run_id": "ddim100-fixed-v1",
+  "implementations": {
+    "reference_revision": "5be0a1b18e2fac0a878c0ccd450b4923c004f70c",
+    "pinned_guided_diffusion_revision": "effbde7325b22ce8dc3e2c06c160c021e743a12d",
+    "deepinv_revision": "b008b0c3f0ad946a027dc9d83d7c97148372b870",
+    "comparison_revision": "197d268204cbcf886cb26a07d7a442023131842b",
+    "checkpoint_sha256": "81d535743156ec6be34d8668e6920da94f0614074d7793a16c8fa9e306237faa"
+  },
+  "environment": {
+    "python": "3.10.20",
+    "torch": "2.14.0+cu130",
+    "cuda": "13.0",
+    "cudnn": "92400",
+    "deterministic_algorithms": true,
+    "allow_tf32": false
+  },
+  "alignment": {
+    "timesteps_equal": true,
+    "noise_levels_equal": true,
+    "max_final_mae": 0.0,
+    "max_final_abs": 0.0,
+    "max_trajectory_mae": 0.0,
+    "max_trajectory_relative_l2": 0.0,
+    "max_delta_psnr_db": 0.0,
+    "max_delta_ssim": 0.0,
+    "max_delta_lpips": 0.0
+  },
+  "cases": [
+    {
+      "id": "00000",
+      "psnr_db": 24.702084664837148,
+      "ssim": 0.7234990000724792,
+      "lpips": 0.2855389416217804
+    },
+    {
+      "id": "00001",
+      "psnr_db": 22.745389264484505,
+      "ssim": 0.5963467955589294,
+      "lpips": 0.38052284717559814
+    },
+    {
+      "id": "00002",
+      "psnr_db": 6.937231047880391,
+      "ssim": 0.0016523614758625627,
+      "lpips": 0.7648056149482727
+    }
+  ],
+  "mean": {
+    "psnr_db": 18.12823499240068,
+    "ssim": 0.44049938570242375,
+    "lpips": 0.4769558012485504
+  },
+  "artifacts": {
+    "run_manifest": "reproduction/artifacts/runs/dps/ffhq256_inpainting_ddim100_eta0_v1/ddim100-fixed-v1/manifest.json",
+    "run_manifest_sha256": "5699710abbca05fb6d151d1bffbff1de322a7bb0c1dfb5adbc880f718dc2ed5c",
+    "comparison": "reproduction/artifacts/runs/dps/ffhq256_inpainting_ddim100_eta0_v1/ddim100-fixed-v1/comparison.json",
+    "comparison_sha256": "37fb21d7e8b725dc419b725288d0f263b230b6ebe533e2b593c8adbe8f8bfa20"
+  }
+}

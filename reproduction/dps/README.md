@@ -122,5 +122,6 @@ sampler, exports, or DPS harness are uncommitted, so the recorded revision
 always identifies the executed implementation. `--dry-run` remains available
 during development.
 
-No certification result is included yet. A result is valid only after both
-full GPU runs finish and `compare.py` reports `PASS`.
+Passed compact reports are tracked in [`certifications/`](certifications/).
+The full tensor artifacts remain ignored and are verified by the hashes in
+each report.
