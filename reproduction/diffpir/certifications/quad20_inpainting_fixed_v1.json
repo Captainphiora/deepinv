@@ -1,0 +1,107 @@
+{
+  "schema_version": 2,
+  "status": "PASS",
+  "setting": {
+    "id": "ffhq256_inpainting_diffpir_quad20_v1",
+    "sha256": "e0c19d87e6aeccadec36fa4b5e10f90f899a86944fe9871e3cf2f06338efb7d9"
+  },
+  "fixture": {
+    "id": "ffhq256_inpainting_diffpir_quad20_v1",
+    "manifest_sha256": "1c20754f29d08bc6c30c3f2b087e7c631e1686907479b2f474dc8a19b5c16400"
+  },
+  "run_id": "reproduce-20260904T140517Z",
+  "implementations": {
+    "reference_revision": "2a9898129a1b274131b98746e5b364bc20adc1e1",
+    "deepinv_revision": "110b007ed09ecba130771c412a0949d459538f80",
+    "comparison_revision": "110b007ed09ecba130771c412a0949d459538f80",
+    "checkpoint_sha256": "81d535743156ec6be34d8668e6920da94f0614074d7793a16c8fa9e306237faa"
+  },
+  "environment": {
+    "python": "3.10.20",
+    "torch": "2.14.0+cu130",
+    "numpy": "2.2.6",
+    "cuda": "13.0",
+    "cudnn": "92400",
+    "reference_device": "cuda:0",
+    "deepinv_device": "cuda:1",
+    "gpu_name": "NVIDIA GeForce RTX 5090",
+    "gpu_compute_capability": [12, 0],
+    "deterministic_algorithms": true,
+    "allow_tf32": false
+  },
+  "alignment": {
+    "timesteps_equal": true,
+    "noise_levels_equal": true,
+    "max_final_mae": 5.5659737929758535e-08,
+    "max_final_abs": 2.78279185295105e-06,
+    "max_trajectory_mae": 1.4804473735807733e-07,
+    "max_trajectory_relative_l2": 2.894396275351009e-07,
+    "max_delta_psnr_db": 1.6117191847797585e-07,
+    "max_delta_ssim": 1.7881393432617188e-07,
+    "max_delta_lpips": 3.1888484954833984e-06
+  },
+  "cases": [
+    {
+      "id": "00000",
+      "reference": {
+        "psnr_db": 32.137960199056124,
+        "ssim": 0.9271941184997559,
+        "lpips": 0.12218712270259857
+      },
+      "deepinv": {
+        "psnr_db": 32.13796023043115,
+        "ssim": 0.9271942973136902,
+        "lpips": 0.12219031155109406
+      }
+    },
+    {
+      "id": "00001",
+      "reference": {
+        "psnr_db": 31.114374771848922,
+        "ssim": 0.9400782585144043,
+        "lpips": 0.10544572025537491
+      },
+      "deepinv": {
+        "psnr_db": 31.114374663263092,
+        "ssim": 0.9400783181190491,
+        "lpips": 0.10544741153717041
+      }
+    },
+    {
+      "id": "00002",
+      "reference": {
+        "psnr_db": 35.23049226164272,
+        "ssim": 0.9491992592811584,
+        "lpips": 0.14112932980060577
+      },
+      "deepinv": {
+        "psnr_db": 35.230492100470805,
+        "ssim": 0.9491992592811584,
+        "lpips": 0.14112761616706848
+      }
+    }
+  ],
+  "mean": {
+    "reference": {
+      "psnr_db": 32.82760907751592,
+      "ssim": 0.9388238787651062,
+      "lpips": 0.12292072425285976
+    },
+    "deepinv": {
+      "psnr_db": 32.82760899805501,
+      "ssim": 0.9388239582379659,
+      "lpips": 0.12292177975177765
+    },
+    "delta": {
+      "psnr_db": 7.946091074018113e-08,
+      "ssim": 7.947285973752827e-08,
+      "lpips": 1.0554989178929164e-06
+    }
+  },
+  "artifacts": {
+    "run_manifest": "reproduction/artifacts/runs/diffpir/ffhq256_inpainting_diffpir_quad20_v1/reproduce-20260904T140517Z/manifest.json",
+    "run_manifest_sha256": "a7ac88c4cc93f8c3fbec20b6b3014b1c0a42cba01a271a9e016052a0142ff32f",
+    "comparison": "reproduction/artifacts/runs/diffpir/ffhq256_inpainting_diffpir_quad20_v1/reproduce-20260904T140517Z/comparison.json",
+    "comparison_sha256": "6c2a08ad21ae74cb882d785a14b2f6bb8dcd8ee7b587c84727f8c7b8e52c835c"
+  }
+}

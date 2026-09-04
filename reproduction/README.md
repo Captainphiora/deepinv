@@ -45,5 +45,9 @@ and reference notes. Do not copy an original implementation into DeepInv or
 add a framework abstraction until a second working reproduction proves it is
 needed.
 
-See [`dps/README.md`](dps/README.md) and [`dsg/README.md`](dsg/README.md) for
-concrete workflows.
+Each completed algorithm also provides a parameterless, fully configured
+`reproduce.sh` for the canonical task. Run one directly from the repository
+root, for example `bash reproduction/diffpir/reproduce.sh`.
+
+See [`dps/README.md`](dps/README.md), [`dsg/README.md`](dsg/README.md), and
+[`diffpir/README.md`](diffpir/README.md) for concrete workflows.
