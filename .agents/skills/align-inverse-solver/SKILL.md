@@ -35,11 +35,12 @@ cd /mnt/afs/L202500464/DiffPIR && \
 步骤也属于参考侧；统一指标计算属于比较侧，应在 DeepInv 环境中对两边已保存的
 tensor 一次性计算。
 
-只有对应项目的锁文件或依赖声明发生变化时才运行 `uv sync`；缺少依赖时必须在依赖
-所属项目中用 `uv add` 写入，不能临时 `pip install`，也不能把包加到另一个项目来
-迁就当前命令。各项目复用个人目录的 uv 下载缓存，但不得共用 `.venv`。`uv run`
-暂时没有输出时先检查其进程或继续等待，不能据此判定缺包、重建环境或切换到系统
-Python。
+只有对应项目的锁文件或依赖声明发生变化时才运行 `uv sync`；新增、升级或降级依赖
+必须在依赖所属项目中用 `uv add` 写入，移除依赖使用 `uv remove`，不能临时
+`pip install`，也不能把包加到另一个项目来迁就当前命令。各项目通过个人 uv wrapper
+复用 `/mnt/afs/L202500464/.cache/uv`，但不得共用 `.venv`；除非用户明确要求，不能
+传 `--no-cache`、改写 `UV_CACHE_DIR` 或另设 `--cache-dir`。`uv run` 暂时没有输出时
+先检查其进程或继续等待，不能据此判定缺包、重建环境或切换到系统 Python。
 
 CUDA 正式运行若启用 `torch.use_deterministic_algorithms(True)`，必须在启动 Python
 前导出 `CUBLAS_WORKSPACE_CONFIG=:4096:8`；不同 Torch 版本可能对缺少该变量表现为

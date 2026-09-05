@@ -136,6 +136,8 @@ def configure_determinism(seed: int) -> None:
 def environment(device: str) -> dict:
     cudnn = torch.backends.cudnn.version()
     requested_device = torch.device(device)
+    python_prefix = Path(sys.prefix).resolve()
+    uv_project = python_prefix.parent
     gpu = None
     if requested_device.type == "cuda" and torch.cuda.is_available():
         index = (
@@ -153,7 +155,10 @@ def environment(device: str) -> dict:
     return {
         "python": platform.python_version(),
         "python_executable": str(Path(sys.executable).resolve()),
-        "python_prefix": str(Path(sys.prefix).resolve()),
+        "python_prefix": str(python_prefix),
+        "uv_project": str(uv_project),
+        "pyproject_sha256": file_sha256(uv_project / "pyproject.toml"),
+        "uv_lock_sha256": file_sha256(uv_project / "uv.lock"),
         "torch": torch.__version__,
         "numpy": np.__version__,
         "cuda": torch.version.cuda,
