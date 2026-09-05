@@ -7,8 +7,9 @@ flow matching 的反问题求解算法，并用算法原始仓库作为行为基
 
 每个算法的正式验收对象只有：
 
-> 在同一依赖环境、同型号 GPU、同一模型权重、同一输入张量和同一随机增量下，
-> DeepInv 实现是否与原始仓库实现一致。两个实现可以使用不同物理 GPU。
+> 在各自独立且已锁定的仓库环境、兼容的关键数值栈、同型号 GPU、同一模型权重、
+> 同一输入张量和同一随机增量下，DeepInv 实现是否与原始仓库实现一致。两个实现
+> 可以使用不同物理 GPU。
 
 CPU 与 GPU 之间的数值一致性不属于验收项，也不为此增加测试。GPU UUID 和设备序号
 只记录为 provenance，不作为通过条件。若两个仓库无法逐位一致，必须根据实际误差
@@ -90,7 +91,8 @@ clone 不会自动拥有它们；应根据 certification 中的 setting、run ID
 - 原始仓库是否是 setting 指定提交上的干净 worktree？
 - checkpoint SHA256 是否与 setting 一致？
 - 固定 fixture 是否存在，manifest SHA256 是否与 certification 一致？
-- 两个 runner 是否会在同一个 uv 环境和同型号/计算能力的 GPU 上运行？
+- 两个 runner 是否分别使用各自仓库的 uv 环境，并在同型号/计算能力的 GPU 上运行？
+- 两边的 Python/Torch/CUDA/cuDNN 等关键数值栈是否兼容；若不同，是否先做受控归因？
 - 本次是复查已有认证、增加新 setting，还是实现新算法？
 
 ## 2. 分支与目录
@@ -169,17 +171,23 @@ reproduction/artifacts/runs/<algorithm>/<setting-id>/<run-id>/
 
 ## 3. 环境管理
 
-DeepInv 使用仓库自己的 uv 环境：
+DeepInv 和每个原始算法仓库分别使用自己的 uv 环境。不得从 DeepInv 的 `.venv`
+导入原始仓库，也不得让原始 runner 偷用 DeepInv 环境。例如：
 
 ```bash
 cd /mnt/afs/L202500464/deepinv
 /mnt/afs/L202500464/uv-env-tool.sh --source china --proxy off \
   sync --locked --group dev --extra reproduction
+
+cd /mnt/afs/L202500464/DiffPIR
+/mnt/afs/L202500464/uv-env-tool.sh --source china --proxy off \
+  sync --locked
 ```
 
-- 环境路径：`/mnt/afs/L202500464/deepinv/.venv`
+- DeepInv 环境路径：`/mnt/afs/L202500464/deepinv/.venv`
+- 原始仓库环境路径：`<reference-repository>/.venv`
 - uv 共享缓存：`/mnt/afs/L202500464/.cache/uv`
-- Python 和依赖版本由 `pyproject.toml` 与 `uv.lock` 固定。
+- 各仓库的 Python 和依赖版本分别由其 `pyproject.toml` 与 `uv.lock` 固定。
 - 后续下载会自动复用 uv 缓存，不使用 `--no-cache`，也不清理共享缓存。
 - 新依赖必须用 `uv add`，不能只执行临时的 `pip install`：
 
@@ -189,10 +197,17 @@ cd /mnt/afs/L202500464/deepinv
   add --optional reproduction <package>
 ```
 
-所有正式 runner、诊断脚本和测试统一使用下面的启动前缀：
+升级或降级同样使用 `uv add <package>==<version>`，删除依赖使用 `uv remove`。除非
+用户明确要求，不传 `--no-cache`、不覆盖 `UV_CACHE_DIR`，也不清理共享缓存；不同
+项目可复用下载缓存，但 `.venv`、`pyproject.toml` 和 `uv.lock` 必须保持独立。
+
+每个 runner、诊断脚本和测试都先进入其所属仓库，再使用该仓库的启动前缀：
 
 ```bash
 cd /mnt/afs/L202500464/deepinv && \
+  /mnt/afs/L202500464/uv-env-tool.sh --proxy off uv run --no-sync python ...
+
+cd /mnt/afs/L202500464/DiffPIR && \
   /mnt/afs/L202500464/uv-env-tool.sh --proxy off uv run --no-sync python ...
 ```
 
@@ -207,17 +222,20 @@ cd /mnt/afs/L202500464/deepinv && \
   python -c 'import sys; print(sys.executable)'
 ```
 
-预期输出位于 `/mnt/afs/L202500464/deepinv/.venv/bin/`（当前为 `python3`）。导入 Torch 或初始化
-CUDA 可能暂时没有标准输出；应等待正在运行的进程完成，不能仅因一次命令尚未输出
-就重建环境、安装依赖或改用系统 Python。
+输出的 `sys.prefix` 应分别指向当前仓库的 `.venv`；底层 uv 管理的 Python executable
+可以相同，这不代表环境被共享。导入 Torch 或初始化 CUDA 可能暂时没有标准输出；
+应等待正在运行的进程完成，不能仅因一次命令尚未输出就重建环境、安装依赖或改用
+系统 Python。若原始仓库只能依赖旧接口，则建立有明确提交记录的最小兼容提交；
+兼容修改不能改变算法公式和数值语义。setting 中同时记录上游算法提交和实际执行的
+兼容提交。
 
-原始仓库 runner 和 DeepInv runner 都由这一个 `.venv` 执行。若原始仓库只能依赖旧
-接口，则建立有明确提交记录的最小兼容提交；兼容修改不能改变算法公式和数值语义。
-setting 中同时记录上游算法提交和实际执行的兼容提交。
-
-正式运行时 manifest 会记录 Python、Torch、NumPy、CUDA、cuDNN、确定性开关、
-GPU 型号、计算能力、设备序号和 UUID。比较器要求软件环境、设备类型、GPU 型号和
-计算能力一致，但忽略设备序号与 UUID；后两者只用于定位任务实际落在哪张卡上。
+正式运行时 manifest 会分别记录两个环境的 Python executable/prefix、uv project、
+`pyproject.toml`/`uv.lock` 哈希、Python、Torch、NumPy、CUDA、cuDNN、确定性开关、
+GPU 型号、计算能力、设备序号和 UUID。启用 `separate_uv_projects` 时，比较器要求两个
+prefix 不同；同时要求设备类型、GPU 型号/计算能力和确定性开关一致。关键数值栈版本
+会被记录但不会仅因版本号不同自动失败，因为不同版本仍可能数值对齐。设备序号与
+UUID 只作 provenance。若关键栈不同且比较失败，必须用“不同栈/同栈 × 共享/独立
+prefix”的受控实验归因，不能直接修改 DeepInv 主环境。
 
 ## 4. 数值文件格式
 

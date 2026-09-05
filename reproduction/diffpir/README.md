@@ -55,7 +55,7 @@ bash reproduction/diffpir/reproduce_motion_deblur.sh
 
 五图四组 setting 已于 run `motion-deblur-20260905T140737Z` 全部通过；固定结果摘要、外部 kernel 依赖版本与 artifact SHA256 见 [`certifications/motion_deblur_ffhq5_v1.json`](certifications/motion_deblur_ffhq5_v1.json)。
 
-## Bicubic SR ×4（对齐中）
+## Bicubic SR ×4（已完成）
 
 以下脚本固定同样五张图片和四组有噪/无噪 × 20/100 NFE 论文参数。`v2` 已修复初始噪声与第一步 transition noise 意外相同的问题；原始仓库五图 sanity gate 已通过。脚本依次生成 fixture、运行官方仓库、记录官方指标、运行 DeepInv、比较并可视化：
 
@@ -67,4 +67,4 @@ bash reproduction/diffpir/reproduce_sr4.sh
 
 官方测量为带抗混叠的 MATLAB 风格 bicubic resize，solver 为官方 25×25 MAT kernel 的圆周卷积加抽取；两者不完全等价，详细差异见论文配置文档中的 SR 小节。两边读取相同 `.pt` 测量、kernel、OpenCV 上采样初始图和全部随机量。SR PSNR/SSIM 裁边 4，LPIPS 不裁边，全部口径记录在 `comparison.json.metric_protocol`；可视化重用独立的 `visualize_deblur.py`。
 
-参数、实际 timestep、原始仓库五图指标和门禁结论见 [`reports/sr4_reference_gate_20260905.zh-CN.md`](reports/sr4_reference_gate_20260905.zh-CN.md)。独立环境正式认证结果将在运行完成后补入 certification 与最终汇总。
+参数、实际 timestep、原始仓库五图指标和门禁结论见 [`reports/sr4_reference_gate_20260905.zh-CN.md`](reports/sr4_reference_gate_20260905.zh-CN.md)。五图四组 setting 已于 run `sr4-20260905T173018Z` 在两个独立 uv 环境中全部通过；固定结果、环境锁哈希与 artifact SHA256 见 [`certifications/sr4_ffhq5_v2.json`](certifications/sr4_ffhq5_v2.json)。全项目结果及 PyTorch 数值栈归因见 [`../FINAL_ALIGNMENT_SUMMARY.zh-CN.md`](../FINAL_ALIGNMENT_SUMMARY.zh-CN.md)。

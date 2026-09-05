@@ -16,6 +16,9 @@ Every reproduction follows the same order:
 
 The complete Chinese handoff and field reference is
 [`ALIGNMENT_WORKFLOW.zh-CN.md`](ALIGNMENT_WORKFLOW.zh-CN.md).
+The current DPS/DSG/DiffPIR result matrix, operator mapping, and controlled
+PyTorch-stack diagnosis are in
+[`FINAL_ALIGNMENT_SUMMARY.zh-CN.md`](FINAL_ALIGNMENT_SUMMARY.zh-CN.md).
 The mathematical and implementation conventions for linear degradation operators are
 documented in
 [`LINEAR_DEGRADATION_OPERATORS.zh-CN.md`](LINEAR_DEGRADATION_OPERATORS.zh-CN.md).
@@ -34,9 +37,11 @@ From the repository root, restore the pinned Python 3.10 environment with:
   sync --locked --group dev --extra reproduction
 ```
 
-The environment lives in `.venv`; `uv.lock` is committed. Downloads are shared
-automatically through `$HOME/.cache/uv`. Add a reproduction-only dependency
-with `uv add` so both `pyproject.toml` and the lock stay current:
+The DeepInv environment lives in this repository's `.venv`; every reference
+repository keeps its own `.venv` and `uv.lock`. Downloads are shared
+automatically through `$HOME/.cache/uv`, but installation prefixes are not.
+Add a reproduction-only dependency with `uv add` so both `pyproject.toml` and
+the lock stay current:
 
 ```bash
 "$HOME/uv-env-tool.sh" --source china --proxy off \

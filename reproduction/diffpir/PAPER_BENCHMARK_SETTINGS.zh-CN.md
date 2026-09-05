@@ -1,6 +1,6 @@
 # DiffPIR 论文基准完整 setting
 
-> 状态：论文 setting 已核对；Gaussian deblur 与 motion deblur 已按用户指定的 `demo_test` 五图完成小规模对齐。SR ×4 的错误相关随机流已修复，`v2` 原始仓库五图 sanity gate 已通过，尚未运行 DeepInv 正式五图对齐。论文数值只作 100 图基准参考，不与五图均值混为一谈。
+> 状态：论文 setting 已核对；Gaussian deblur、motion deblur 与 SR ×4 已按用户指定的 `demo_test` 五图完成跨仓库对齐。论文数值只作 100 图基准参考，不与五图均值混为一谈。论文 setting 的 box/random inpainting 四组实验尚未运行；早期三图 demo setting 不计入论文指标复现。
 
 ## 1. 范围与口径
 
@@ -312,10 +312,10 @@ SR `comparison.json` 中 PSNR/SSIM 从 `.pt` 浮点 RGB 图像计算，裁去四
 
 顺序固定为：先运行锁定 commit 的原始仓库并写出 `reference_metrics.json`，再运行 DeepInv，最后生成 `comparison.json` 与 `visualization.png`。五图输入、measurement noise、`x_init`、transition-noise tape、kernel 和 schedule 均冻结为 `.pt`；每个文件及 tensor 内容均记录 SHA256。
 
-第一阶段结束即停止，不自动继续 motion deblur、SR 或 inpainting 论文 setting，等待用户确认。
+Gaussian 阶段已完成；历史上的逐任务确认停点保留在脚本和报告中，不再表示当前仍停在该阶段。
 
 第二阶段 motion deblur 已完成：仍使用上述五张图，依次运行 noisy/noiseless × 20/100 NFE 四组 setting；motion kernel 固定为 61×61、intensity=0.5，并按官方 `case_index*10` 种子及两次 `Kernel` 构造顺序生成。四组比较均 PASS，证书见 [`certifications/motion_deblur_ffhq5_v1.json`](certifications/motion_deblur_ffhq5_v1.json)。
 
-第三阶段进入 SR ×4：同样五张图，noisy 20/100 NFE 分别使用 `(lambda,zeta)=(8,0.4)/(8,0.2)`，noiseless 20/100 NFE 分别使用 `(9,0.2)/(6,0.3)`。`v1` fixture 曾把 seed 都为 42 的两个独立生成器重新置零，造成 `initial_noise == transition_noise[0]`，使 noiseless/20 均值降到 19.5041 dB。`v2` 使用有明确 policy 的独立 seed 42/43；原始仓库 run `sr4-20260905T161302Z` 的 noiseless/20 恢复到 26.9796 dB，reference sanity gate 通过。由于论文是不同的 100 图集合，五图均值仍为 `NOT_COMPARABLE`。DeepInv 正式阶段继续停在用户确认点；入口 `reproduce_sr4.sh` 当前仍只运行原始侧。
+第三阶段 SR ×4 已完成：同样五张图，noisy 20/100 NFE 分别使用 `(lambda,zeta)=(8,0.4)/(8,0.2)`，noiseless 20/100 NFE 分别使用 `(9,0.2)/(6,0.3)`。`v1` fixture 曾把 seed 都为 42 的两个独立生成器重新置零，造成 `initial_noise == transition_noise[0]`，使 noiseless/20 均值降到 19.5041 dB。`v2` 使用有明确 policy 的独立 seed 42/43；原始仓库 run `sr4-20260905T161302Z` 的 noiseless/20 恢复到 26.9796 dB，reference sanity gate 通过。随后 run `sr4-20260905T173018Z` 在 DiffPIR 与 DeepInv 各自独立的 uv 环境中完成四组五图正式比较并全部 PASS，证书见 [`certifications/sr4_ffhq5_v2.json`](certifications/sr4_ffhq5_v2.json)。由于论文是不同的 100 图集合，五图均值仍为 `NOT_COMPARABLE`。
 
 剩余第四阶段是论文 setting 的 inpainting：box/random × 20/100 NFE，共四组无噪声配置；早期三图 random/NFE=20/lambda=1 demo 认证不覆盖这一组。
