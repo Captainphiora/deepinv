@@ -14,10 +14,10 @@ IMAGES="/mnt/afs/L202500464/DiffPIR/testsets/demo_test"
 CHECKPOINT="/mnt/afs/L202500464/DiffPIR/model_zoo/diffusion_ffhq_10m.pt"
 RUN_ID="sr4-$(date -u +%Y%m%dT%H%M%SZ)"
 SETTING_IDS=(
-  ffhq256_bicubic_sr4_sigma005_diffpir_quad20_v1
-  ffhq256_bicubic_sr4_sigma005_diffpir_quad100_v1
-  ffhq256_bicubic_sr4_sigma000_diffpir_quad20_v1
-  ffhq256_bicubic_sr4_sigma000_diffpir_quad100_v1
+  ffhq256_bicubic_sr4_sigma005_diffpir_quad20_v2
+  ffhq256_bicubic_sr4_sigma005_diffpir_quad100_v2
+  ffhq256_bicubic_sr4_sigma000_diffpir_quad20_v2
+  ffhq256_bicubic_sr4_sigma000_diffpir_quad100_v2
 )
 DEVICES=(cuda:0 cuda:1 cuda:2 cuda:3)
 

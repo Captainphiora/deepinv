@@ -14,6 +14,7 @@ from prepare_inputs import (  # noqa: E402
     official_gaussian_kernel,
     official_motion_kernel,
     official_random_mask,
+    validate_random_streams,
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -26,6 +27,15 @@ class ZeroEpsilon(torch.nn.Module):
 
 
 class DiffPIRAlignmentTest(unittest.TestCase):
+    def test_independent_random_streams_reject_equal_seeds(self):
+        randomness = {
+            "stream_policy": "independent_generators_with_distinct_seeds",
+            "x_init_seed": 42,
+            "transition_seed": 42,
+        }
+        with self.assertRaisesRegex(ValueError, "distinct seeds"):
+            validate_random_streams(randomness)
+
     def test_sr_prox_solves_normal_equation(self):
         # Non-symmetric odd kernel detects convolution direction and sampling phase.
         generator = torch.Generator().manual_seed(4)

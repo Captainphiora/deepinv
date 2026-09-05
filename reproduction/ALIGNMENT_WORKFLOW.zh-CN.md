@@ -172,22 +172,44 @@ reproduction/artifacts/runs/<algorithm>/<setting-id>/<run-id>/
 DeepInv 使用仓库自己的 uv 环境：
 
 ```bash
-cd "$HOME/deepinv"
-"$HOME/uv-env-tool.sh" --source china --proxy off \
+cd /mnt/afs/L202500464/deepinv
+/mnt/afs/L202500464/uv-env-tool.sh --source china --proxy off \
   sync --locked --group dev --extra reproduction
 ```
 
-- 环境路径：`$HOME/deepinv/.venv`
-- uv 共享缓存：`$HOME/.cache/uv`
+- 环境路径：`/mnt/afs/L202500464/deepinv/.venv`
+- uv 共享缓存：`/mnt/afs/L202500464/.cache/uv`
 - Python 和依赖版本由 `pyproject.toml` 与 `uv.lock` 固定。
 - 后续下载会自动复用 uv 缓存，不使用 `--no-cache`，也不清理共享缓存。
 - 新依赖必须用 `uv add`，不能只执行临时的 `pip install`：
 
 ```bash
-cd "$HOME/deepinv"
-"$HOME/uv-env-tool.sh" --source china --proxy off \
+cd /mnt/afs/L202500464/deepinv
+/mnt/afs/L202500464/uv-env-tool.sh --source china --proxy off \
   add --optional reproduction <package>
 ```
+
+所有正式 runner、诊断脚本和测试统一使用下面的启动前缀：
+
+```bash
+cd /mnt/afs/L202500464/deepinv && \
+  /mnt/afs/L202500464/uv-env-tool.sh --proxy off uv run --no-sync python ...
+```
+
+必须把 `cd` 和 `uv run` 写在同一条 shell 命令里，不能依赖 agent/执行工具的
+`workdir` 参数；否则 uv 可能在上一级目录解析项目并误报缺少 `torch` 等依赖。
+`--no-sync` 保证正式运行只使用已锁定且已经创建的 `.venv`，不会在实验过程中隐式
+修改环境。首次运行或锁文件发生变化时才执行前面的 `sync --locked`。快速核验命令：
+
+```bash
+cd /mnt/afs/L202500464/deepinv && \
+  /mnt/afs/L202500464/uv-env-tool.sh --proxy off uv run --no-sync \
+  python -c 'import sys; print(sys.executable)'
+```
+
+预期输出位于 `/mnt/afs/L202500464/deepinv/.venv/bin/`（当前为 `python3`）。导入 Torch 或初始化
+CUDA 可能暂时没有标准输出；应等待正在运行的进程完成，不能仅因一次命令尚未输出
+就重建环境、安装依赖或改用系统 Python。
 
 原始仓库 runner 和 DeepInv runner 都由这一个 `.venv` 执行。若原始仓库只能依赖旧
 接口，则建立有明确提交记录的最小兼容提交；兼容修改不能改变算法公式和数值语义。
@@ -548,9 +570,10 @@ setting 至少包含：
   },
   "randomness": {
     "fixture_seed": 42,
-    "measurement_seed": 42,
+    "measurement_seed": 41,
+    "stream_policy": "independent_generators_with_distinct_seeds",
     "x_init_seed": 42,
-    "transition_seed": 42,
+    "transition_seed": 43,
     "deterministic_algorithms": true,
     "allow_tf32": false
   },
@@ -588,12 +611,18 @@ DDPM、`eta > 0` 的 DDIM，以及随机 SDE/flow solver 必须保存逐步随�
 DDIM、ODE 或确定性 flow solver 仍必须保存 `x_init`。seed 只用于 provenance，不能
 替代这些张量。
 
+测量噪声、初始噪声和 transition noise 是不同随机变量，必须使用不同的固定随机流。
+若用独立 `torch.Generator`，各流 seed 必须不同；禁止把两个生成器重置为同一个 seed
+后生成同形状张量。fixture 完成后必须检查 initial noise 不与第一步 transition noise
+逐元素相同，并把 `stream_policy` 和各流实际 seed 写入 manifest。
+
 当前共享 fixture 生成器示例：
 
 ```bash
-cd "$HOME/deepinv"
+cd /mnt/afs/L202500464/deepinv
+PYTHON=(/mnt/afs/L202500464/uv-env-tool.sh --proxy off uv run --no-sync python)
 
-.venv/bin/python reproduction/dps/prepare_inputs.py \
+"${PYTHON[@]}" reproduction/dps/prepare_inputs.py \
   --setting <setting-id> \
   --fixture-id <fixture-id> \
   --images <clean-image-directory> \
@@ -663,9 +692,10 @@ fixture 生成后，先只运行原始仓库并写 `reference_metrics.json` 和�
 然后在同型号 GPU 上运行原始仓库和 DeepInv。设备序号可以不同，因此两边可以并行：
 
 ```bash
-cd "$HOME/deepinv"
+cd /mnt/afs/L202500464/deepinv
+PYTHON=(/mnt/afs/L202500464/uv-env-tool.sh --proxy off uv run --no-sync python)
 
-.venv/bin/python reproduction/<algorithm>/run_reference.py \
+"${PYTHON[@]}" reproduction/<algorithm>/run_reference.py \
   --setting <setting-id> \
   --fixture-id <fixture-id> \
   --run-id <smoke-run-id> \
@@ -674,7 +704,7 @@ cd "$HOME/deepinv"
   --case 00000 \
   --device cuda:0
 
-.venv/bin/python reproduction/<algorithm>/run_deepinv.py \
+"${PYTHON[@]}" reproduction/<algorithm>/run_deepinv.py \
   --setting <setting-id> \
   --fixture-id <fixture-id> \
   --run-id <smoke-run-id> \
@@ -682,7 +712,7 @@ cd "$HOME/deepinv"
   --case 00000 \
   --device cuda:1
 
-.venv/bin/python reproduction/dps/compare.py \
+"${PYTHON[@]}" reproduction/dps/compare.py \
   --setting <setting-id> \
   --fixture-id <fixture-id> \
   --run-id <smoke-run-id> \

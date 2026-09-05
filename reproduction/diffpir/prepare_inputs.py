@@ -89,6 +89,16 @@ def official_circular_blur(image: np.ndarray, kernel: torch.Tensor) -> torch.Ten
     )
 
 
+def validate_random_streams(randomness: dict) -> None:
+    policy = randomness.get("stream_policy", "legacy")
+    if policy == "legacy":
+        return
+    if policy != "independent_generators_with_distinct_seeds":
+        raise ValueError(f"unsupported random stream policy: {policy}")
+    if randomness["x_init_seed"] == randomness["transition_seed"]:
+        raise ValueError("independent x_init and transition streams need distinct seeds")
+
+
 def main() -> None:
     args = parse_args()
     setting_file, setting = load_setting(args.setting)
@@ -110,6 +120,7 @@ def main() -> None:
 
     task = setting["task"]
     sampler = setting["sampler"]
+    validate_random_streams(setting["randomness"])
     height, width = task["image_size"][-2:]
     if height != width and task["name"] == "inpainting":
         raise ValueError("the official random-mask generator requires square images")
@@ -325,6 +336,10 @@ def main() -> None:
             (sampler["sampling_steps"] - 1, *clean_01.shape),
             generator=transition_generator,
         )
+        if setting["randomness"].get("stream_policy") == (
+            "independent_generators_with_distinct_seeds"
+        ) and torch.equal(initial_noise, transition_noise[0]):
+            raise RuntimeError("initial and first transition noise must be independent")
 
         tensors = {
             "ground_truth": clean_01.mul(2).sub(1),

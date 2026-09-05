@@ -1,0 +1,95 @@
+{
+  "schema_version": 2,
+  "id": "ffhq256_bicubic_sr4_sigma005_diffpir_quad100_v2",
+  "algorithm": {
+    "name": "diffpir",
+    "lambda_": 8,
+    "guidance_scale": 1,
+    "iter_num_U": 1
+  },
+  "task": {
+    "name": "super_resolution",
+    "image_size": [
+      3,
+      256,
+      256
+    ],
+    "batch_size": 1,
+    "factor": 4,
+    "sr_mode": "blur",
+    "classical_degradation": false,
+    "measurement_operator": "official utils_image.imresize_np, antialiasing=True, symmetric boundary",
+    "solver_operator": "circular convolution with official MAT kernel then top-left decimation",
+    "initialization": "OpenCV INTER_CUBIC upsample of measurement, then VP noise at t=999",
+    "kernel_file": "kernels/kernels_bicubicx234.mat",
+    "kernel_file_sha256": "6be1ba76a6d6e8bb7fb3e94f109043c7ec250b547ced6c8a31b8cb38bcebd5d5",
+    "padding": "circular",
+    "measurement_noise_sigma": 0.05,
+    "noise_level": 0.05,
+    "algorithm_sigma": 0.05,
+    "value_range": [
+      -1,
+      1
+    ]
+  },
+  "model": {
+    "name": "diffusion_ffhq_10m",
+    "checkpoint_sha256": "81d535743156ec6be34d8668e6920da94f0614074d7793a16c8fa9e306237faa",
+    "model_input_type": "timestep",
+    "prediction_type": "epsilon",
+    "variance_type": "learned_range"
+  },
+  "sampler": {
+    "name": "diffpir",
+    "train_steps": 1000,
+    "sampling_steps": 100,
+    "noise_schedule": "linear",
+    "skip_type": "quad",
+    "beta_start": 0.0001,
+    "beta_end": 0.02,
+    "eta": 0,
+    "zeta": 0.2,
+    "clip_denoised": true
+  },
+  "randomness": {
+    "fixture_seed": 42,
+    "measurement_seed": 0,
+    "stream_policy": "independent_generators_with_distinct_seeds",
+    "x_init_seed": 42,
+    "transition_seed": 43,
+    "deterministic_algorithms": true,
+    "allow_tf32": false
+  },
+  "trajectory_probe_steps": [
+    0,
+    1,
+    2,
+    50,
+    98,
+    99
+  ],
+  "thresholds": {
+    "trajectory_mae": 0.0003,
+    "trajectory_relative_l2": 0.001,
+    "per_case_delta_psnr_db": 0.1,
+    "per_case_delta_ssim": 0.002,
+    "per_case_delta_lpips": 0.005,
+    "mean_delta_psnr_db": 0.03,
+    "mean_delta_ssim": 0.0005,
+    "mean_delta_lpips": 0.002
+  },
+  "paper_reference": {
+    "dataset_size": 100,
+    "psnr_db": 26.64,
+    "fid": 65.77,
+    "lpips": 0.26
+  },
+  "reference": {
+    "repository": "https://github.com/yuanzhi-zhu/DiffPIR.git",
+    "commit": "2a9898129a1b274131b98746e5b364bc20adc1e1",
+    "entrypoint": "main_ddpir_sisr.py"
+  },
+  "metrics": {
+    "crop_border": 4
+  }
+}

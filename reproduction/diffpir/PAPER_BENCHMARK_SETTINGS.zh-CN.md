@@ -1,6 +1,6 @@
 # DiffPIR 论文基准完整 setting
 
-> 状态：论文 setting 已核对；Gaussian deblur 与 motion deblur 已按用户指定的 `demo_test` 五图完成小规模对齐。SR ×4 原始仓库论文门禁当前为 **BLOCKED**，尚未运行 DeepInv 正式五图对齐。论文数值只作 100 图基准参考，不与五图均值混为一谈。
+> 状态：论文 setting 已核对；Gaussian deblur 与 motion deblur 已按用户指定的 `demo_test` 五图完成小规模对齐。SR ×4 的错误相关随机流已修复，`v2` 原始仓库五图 sanity gate 已通过，尚未运行 DeepInv 正式五图对齐。论文数值只作 100 图基准参考，不与五图均值混为一谈。
 
 ## 1. 范围与口径
 
@@ -39,7 +39,7 @@ inpainting 又包含 box 和 random 两种 mask，所以论文附录的超参数
 | 训练扩散步数 | `N = 1000` |
 | beta schedule | linear，`beta_start = 0.0001`，`beta_end = 0.02`，官方代码用 `np.float32` 生成 beta |
 | 采样步数/NFE | 分别评估 20 和 100；一次 denoiser 调用计一个 NFE |
-| timestep 子序列 | `quad`，低噪声区域更密集，精确规则见下一节 |
+| timestep 子序列 | 论文写为 DDIM quadratic；发布代码的实际公式与 DDIM 原仓库不同，执行规则见下一节 |
 | 模型输出使用方式 | 官方实现取 `pred_xstart`，内部模型 checkpoint 为 epsilon prediction + learned variance |
 | 数据子问题 | `sub_1_analytic = true`；线性任务使用闭式解 |
 | `iter_num_U` | 1 |
@@ -60,11 +60,13 @@ sigma = max(0.001, sigma_y)
 
 因此 `lambda` 越大并不等于更强的测量约束；在上述目标函数写法中，它会增大 proximal 项中靠近 diffusion 预测的权重。
 
-## 4. 20/100 NFE 的精确 sampling schedule
+## 4. 20/100 NFE 的发布代码 sampling schedule
 
 两个字段不能混淆：`noise_schedule="linear"` 先定义完整 1000 步中每个 timestep 的 beta、`alpha_cumprod` 和等效噪声强度；`skip_type="quad"` 再决定推理时从这 1000 步中抽取哪 20 或 100 个点。前者定义完整噪声轨迹，后者只定义稀疏采样位置。
 
-官方代码不是均匀抽取 timestep，而是先生成索引：
+论文只文字说明采用 DDIM 的 quadratic sequence，没有展开整数公式。DDIM 原仓库实际
+使用 `linspace(0, sqrt(0.8*T), nfe)**2`；DiffPIR 发布代码则使用下面的不同公式。
+跨仓库实现对齐以锁定 DiffPIR commit 的真实执行行为为准，因此当前 fixture 使用：
 
 ```python
 seq = np.sqrt(np.linspace(0, 1000**2, nfe))
@@ -73,6 +75,10 @@ seq[-1] -= 1
 ```
 
 随后用 `sigmas[seq[i]]`，其中 `sigmas` 是按训练 timestep 反向排列的等效噪声表。因此实际传给 diffusion model 的 timestep 等价于 `999 - seq[i]`。
+
+不能再把该整数列表表述成“论文唯一精确公式”；它是发布代码的精确公式。一次只读
+诊断按 DDIM 原公式运行 noiseless/20 首图仅得到 15.8921 dB，未改善 SR 异常，因此
+不进入正式 setting。
 
 ### NFE = 20
 
@@ -310,6 +316,6 @@ SR `comparison.json` 中 PSNR/SSIM 从 `.pt` 浮点 RGB 图像计算，裁去四
 
 第二阶段 motion deblur 已完成：仍使用上述五张图，依次运行 noisy/noiseless × 20/100 NFE 四组 setting；motion kernel 固定为 61×61、intensity=0.5，并按官方 `case_index*10` 种子及两次 `Kernel` 构造顺序生成。四组比较均 PASS，证书见 [`certifications/motion_deblur_ffhq5_v1.json`](certifications/motion_deblur_ffhq5_v1.json)。
 
-第三阶段进入 SR ×4：同样五张图，noisy 20/100 NFE 分别使用 `(lambda,zeta)=(8,0.4)/(8,0.2)`，noiseless 20/100 NFE 分别使用 `(9,0.2)/(6,0.3)`。linear beta schedule 和 quadratic timestep subsequence 均已对齐。原始仓库 run `sr4-20260905T151214Z` 已完成，但 noiseless/20 NFE 出现明显异常，门禁为 `BLOCKED`；DeepInv 正式阶段已停止。入口 `reproduce_sr4.sh` 在门禁解除前也只运行原始侧。本任务完成后停止汇报。
+第三阶段进入 SR ×4：同样五张图，noisy 20/100 NFE 分别使用 `(lambda,zeta)=(8,0.4)/(8,0.2)`，noiseless 20/100 NFE 分别使用 `(9,0.2)/(6,0.3)`。`v1` fixture 曾把 seed 都为 42 的两个独立生成器重新置零，造成 `initial_noise == transition_noise[0]`，使 noiseless/20 均值降到 19.5041 dB。`v2` 使用有明确 policy 的独立 seed 42/43；原始仓库 run `sr4-20260905T161302Z` 的 noiseless/20 恢复到 26.9796 dB，reference sanity gate 通过。由于论文是不同的 100 图集合，五图均值仍为 `NOT_COMPARABLE`。DeepInv 正式阶段继续停在用户确认点；入口 `reproduce_sr4.sh` 当前仍只运行原始侧。
 
 剩余第四阶段是论文 setting 的 inpainting：box/random × 20/100 NFE，共四组无噪声配置；早期三图 random/NFE=20/lambda=1 demo 认证不覆盖这一组。

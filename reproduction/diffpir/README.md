@@ -57,7 +57,7 @@ bash reproduction/diffpir/reproduce_motion_deblur.sh
 
 ## Bicubic SR ×4（第三阶段）
 
-以下脚本固定同样五张图片和四组有噪/无噪 × 20/100 NFE 论文参数。当前 SR 原始仓库论文门禁尚未解除，因此脚本只执行官方仓库和官方指标阶段，不会自动启动 DeepInv：
+以下脚本固定同样五张图片和四组有噪/无噪 × 20/100 NFE 论文参数。`v2` 已修复初始噪声与第一步 transition noise 意外相同的问题；原始仓库五图 sanity gate 已通过。脚本暂时仍只执行官方仓库和官方指标阶段，等待确认后再启动 DeepInv：
 
 ```bash
 bash reproduction/diffpir/reproduce_sr4.sh

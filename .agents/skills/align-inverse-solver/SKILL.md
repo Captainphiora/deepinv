@@ -13,6 +13,21 @@ description: 在 DeepInv 中复现扩散模型或 flow matching 的反问题求�
 2. 追踪参考实现的完整路径：模型参数化、时间网格、反向更新、条件梯度、物理算子、噪声、预处理和输出转换。
 3. 明确预期的等价边界。不得为了提高指标而暗中修改参考算法。
 
+## Python 环境
+
+所有 Python 命令必须在同一条 shell 命令中先显式进入 DeepInv 根目录，再通过个人
+目录的 uv wrapper 启动；不得依赖执行工具单独传入的工作目录：
+
+```bash
+cd /mnt/afs/L202500464/deepinv && \
+  /mnt/afs/L202500464/uv-env-tool.sh --proxy off uv run --no-sync python ...
+```
+
+该命令必须解析到 `/mnt/afs/L202500464/deepinv/.venv/bin/python*`。只有锁文件或依赖
+声明发生变化时才运行 `uv sync`；缺少依赖时必须用 `uv add` 写入项目，不能临时
+`pip install`。`uv run` 暂时没有输出时先检查其进程或继续等待，不能据此判定缺包、
+重建环境或切换到系统 Python。
+
 ## 确定性产物约定
 
 使用保存于 CPU 的 `.pt` 文件作为唯一数值真值；文件中只存张量和基础容器。PNG 等图像只作为预览，不得作为精度比较依据。
@@ -26,6 +41,10 @@ description: 在 DeepInv 中复现扩散模型或 flow matching 的反问题求�
 - 随机采样器每一步所需的随机增量。
 
 固定 Python、NumPy、Torch CPU 和所有 CUDA 设备的随机种子，但不能把“种子相同”当作“输入相同”：不同仓库可能以不同顺序消耗 RNG。两个实现都应直接接收已保存的张量，不得在某个 runner 内重新生成 mask、measurement、噪声或初始点。
+
+初始噪声、测量噪声和逐步 transition noise 必须使用明确且相互独立的随机流；使用
+独立生成器时 seed 也必须不同。fixture 创建后至少检查初始噪声不与首个 transition
+noise 逐元素相同，并把 stream policy 与各流 seed 写入 manifest。
 
 在张量旁保存 JSON manifest，记录路径、SHA-256、形状、数据类型、随机种子、完整配置、两个仓库提交、模型权重哈希及运行环境。被 Git 跟踪的配置使用仓库相对路径，并允许在运行时指定 artifact 根目录。
 
