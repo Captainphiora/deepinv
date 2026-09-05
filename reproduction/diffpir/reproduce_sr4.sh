@@ -46,6 +46,7 @@ test -d "${IMAGES}"
 test -f "${CHECKPOINT}"
 cd "${ROOT}"
 export PYTHONUNBUFFERED=1
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
 
 echo "[1/5] Preparing four immutable five-image SR fixtures in the DiffPIR uv environment"
 for setting_id in "${SETTING_IDS[@]}"; do

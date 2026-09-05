@@ -41,6 +41,10 @@ tensor 一次性计算。
 暂时没有输出时先检查其进程或继续等待，不能据此判定缺包、重建环境或切换到系统
 Python。
 
+CUDA 正式运行若启用 `torch.use_deterministic_algorithms(True)`，必须在启动 Python
+前导出 `CUBLAS_WORKSPACE_CONFIG=:4096:8`；不同 Torch 版本可能对缺少该变量表现为
+报错或静默继续，不能依赖后者。
+
 ## 确定性产物约定
 
 使用保存于 CPU 的 `.pt` 文件作为唯一数值真值；文件中只存张量和基础容器。PNG 等图像只作为预览，不得作为精度比较依据。
