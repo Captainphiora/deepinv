@@ -17,8 +17,9 @@ CPU 与 GPU 之间的数值一致性不属于验收项，也不为此增加测�
 工作流为：
 
 ```text
-固定参考版本 → 定义 setting → 生成不可变 fixture → 实现与单元测试
-             → 单样本对齐 → 完整样本对齐 → 生成认证记录 → 合并长期分支
+固定参考版本 → 参数与时间步审计 → 定义 setting → 生成不可变 fixture
+             → 原始仓库论文门禁 → 实现与单元测试 → 单样本跨仓库对齐
+             → 完整样本对齐 → 生成认证记录 → 合并长期分支
 ```
 
 以下原则不可省略：
@@ -29,8 +30,31 @@ CPU 与 GPU 之间的数值一致性不属于验收项，也不为此增加测�
 4. `noise_level` 始终作为 setting 和 provenance 的一部分保留，即使某个算法当前
    没有直接使用它，或者它的值为零。
 5. 所有正式文件和大体积 artifact 都保存在个人目录 `$HOME` 下，不依赖 `/tmp`。
+6. 论文复现和跨仓库实现对齐是两个串行 gate：先证明“运行的是论文 setting”，再运行
+   原始仓库检查论文指标；原始侧结论未记录前，不开始 DeepInv 正式运行。
 
-### 1.1 新 agent 接手入口
+### 1.1 三个不可颠倒的 gate
+
+每个“论文 setting 对齐”任务必须依次通过或明确处置以下 gate：
+
+1. **参数 gate**：从论文正文/附录和官方代码取得任务、数据集、退化、测量噪声、
+   `lambda`、`zeta`、训练 noise schedule、推理 timestep 选择、NFE、`eta`、初始化、
+   clipping、指标口径等；逐项记录来源、论文值、官方代码值和最终执行值。名称相似的
+   字段不得合并，例如 linear beta schedule 与 quadratic timestep subsequence 是两个
+   独立设置。
+2. **原始仓库论文 gate**：只运行锁定 commit 的原始仓库，先生成独立的
+   `reference_metrics.json`/实验报告。全量论文数据可按预注册容差给出 `PASS/FAIL`；
+   子集只能标记 `NOT_COMPARABLE`，但仍须检查结果是否存在明显异常。若原始仓库不能
+   复现论文指标，停止 DeepInv 正式运行并记录差距、已排查项和待确认问题。只有用户
+   明确接受“改为对齐官方可执行行为”后，才能绕过论文 gate，且 setting/报告名称必须
+   标明它不是论文指标复现。
+3. **跨仓库 gate**：原始侧基准获得接受后，DeepInv 才读取同一 fixture、schedule 和
+   随机 tape 运行，依次比较 timestep、trajectory、raw reconstruction 和图像指标。
+
+不得先写完或运行 DeepInv，再回头猜论文参数；也不得因为 DeepInv 与一个错误的
+reference 数值相近，就宣称论文或算法正确性已经得到验证。
+
+### 1.2 新 agent 接手入口
 
 新 agent 不应先重新实现算法。按以下顺序读取和检查：
 
@@ -333,7 +357,27 @@ run manifest 顶层字段：
 reference 输出还可包含 `distances`，用于诊断原实现每一步的 measurement distance。
 它不是两个实现必须共有的认证字段，不参与当前公共张量比较。
 
-### 4.7 Comparison 字段与指标方向
+### 4.7 Reference metrics 与论文门禁字段
+
+`reference_metrics.json` 必须同时保存原始仓库指标和本次真正执行的参数快照：
+
+| 字段 | 含义 |
+|---|---|
+| `implementation` | 固定为 `reference`，避免与 DeepInv 指标混淆 |
+| `cases` / `mean` | 原始仓库逐例和均值 PSNR、SSIM、LPIPS |
+| `paper_reference` | 论文报告的样本数及指标；未报告的指标必须明确标注 |
+| `paper_metrics_comparable` | 当前输入规模与指标口径能否直接用于论文数值 gate |
+| `paper_metrics_note` | 不可直接比较时的原因 |
+| `parameter_audit.status` | 参数快照是否已写入；`RECORDED` 不等于论文 gate `PASS` |
+| `parameter_audit.algorithm/task/model/sampler/randomness/reference` | setting 中的实际执行值快照 |
+| `parameter_audit.sampled_timesteps` | 从 fixture 读取的完整实际 model timestep 列表 |
+| `parameter_audit.schedule_tensor_sha256` | schedule tensor 内容哈希 |
+
+实验报告在上述机器可读字段之外给出 `PASS`、`FAIL`、`NOT_COMPARABLE` 或 `BLOCKED`
+结论。setting ID/SHA 负责防篡改，但不能替代报告中直接展开 `lambda/zeta`、schedule 和
+timestep。
+
+### 4.8 Comparison 字段与指标方向
 
 `comparison.json` 顶层字段：
 
@@ -411,7 +455,7 @@ reference 输出还可包含 `distances`，用于诊断原实现每一步的 mea
 }
 ```
 
-### 4.8 Certification 字段
+### 4.9 Certification 字段
 
 certification 是 `comparison.json` 的可提交摘要，不取代完整 comparison。当前分别
 记录两套指标的结构使用 `schema_version=2`。字段包括：
@@ -450,6 +494,18 @@ certification 是 `comparison.json` 的可提交摘要，不取代完整 compari
    - 输出保存前的转换。
 5. 明确算法更新的运算顺序、norm 范围、epsilon、广播方式和 batch 约定。
 6. 确认参考 worktree 中算法相关路径为干净状态。
+
+审计结果必须形成逐项参数表，至少包含四列：`字段`、`论文证据`、`官方代码证据`、
+`最终执行值`。特别要分别记录：
+
+- beta/sigma/noise schedule 的类型与端点；
+- timestep subsequence/respacing 的公式和最终整数列表；
+- NFE 与实际模型调用次数；
+- 任务、噪声和 NFE 共同决定的算法参数，例如 `lambda`、`zeta`；
+- 论文指标的数据集大小、颜色空间、裁边、量化和集合级指标口径。
+
+如果论文与官方默认值不同，必须使用独立 setting ID，并在报告中解释如何让原始
+runner 执行论文值。不能把配置文件中的默认值或结果目录名当成实际执行值。
 
 如果现代 PyTorch 无法直接运行旧代码，只允许建立最小兼容补丁。例如把当前 PyTorch
 不再接受的多维 `torch.linalg.norm(..., dim=[...])` 改为数学等价的
@@ -513,6 +569,9 @@ setting 至少包含：
 保留并可能传给模型或算法的配置量。即使当前 setting 中两者数值相等，也不能因为
 某个实现暂时没有读取 `noise_level` 就删除它。
 
+setting 定稿前必须完成参数 gate。每个 schedule 需要同时保存“生成规则”和“展开后的
+实际 timestep”；只记录 `quad`、`linear` 或 `100 steps` 这样的简称不足以复现。
+
 ## 7. 阶段 C：生成固定 fixture
 
 fixture 必须在任一实现运行前生成。每个 case 至少保存：
@@ -550,9 +609,27 @@ cd "$HOME/deepinv"
 fixture ID，并使用类似 `--x-init-seed 00002=43` 的显式 override；原 setting 保持
 不变。
 
+### 7.1 原始仓库论文门禁
+
+fixture 生成后，先只运行原始仓库并写 `reference_metrics.json` 和实验报告。报告必须
+直接展开以下内容，不能只依赖 setting ID 或 SHA256 间接回溯：
+
+- `lambda`、`zeta`、NFE、`eta`、measurement/algorithm noise；
+- noise schedule 及 beta 端点；
+- timestep 选择类型、公式和实际 timestep 列表；
+- task/operator/kernel/mask、初始化和随机性；
+- 输入数量、指标口径、论文指标和原始仓库指标；
+- gate 状态及原因。
+
+若只使用论文数据集的子集，论文集合均值不得作为硬阈值，状态写
+`NOT_COMPARABLE`；如果结果同时出现明显退化，报告可进一步写 `BLOCKED`，并在用户
+确认前不进入阶段 D。正式 DeepInv shell 不得在同一次无人检查的流水线中越过一个
+尚未确认的原始仓库 gate。
+
 ## 8. 阶段 D：实现 DeepInv 算法
 
-实现时按以下顺序处理：
+只有阶段 7.1 的原始仓库基准被接受后，才开始正式 DeepInv 实现/运行。实现时按以下
+顺序处理：
 
 1. 优先复用 DeepInv 已有 model wrapper、physics、reconstructor 和 sampler。
 2. 只增加与原始仓库达到数值等价所必需的兼容层。

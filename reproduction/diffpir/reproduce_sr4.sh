@@ -36,7 +36,7 @@ test -f "${CHECKPOINT}"
 cd "${ROOT}"
 export PYTHONUNBUFFERED=1
 
-echo "[1/5] Preparing four immutable five-image SR fixtures"
+echo "[1/3] Preparing four immutable five-image SR fixtures"
 for setting_id in "${SETTING_IDS[@]}"; do
   setting="${ROOT}/reproduction/diffpir/settings/${setting_id}.json"
   if [[ ! -f "${ARTIFACT_ROOT}/fixtures/${setting_id}/manifest.json" ]]; then
@@ -47,7 +47,7 @@ for setting_id in "${SETTING_IDS[@]}"; do
   fi
 done
 
-echo "[2/5] Running the pinned original repository first"
+echo "[2/3] Running the pinned original repository first"
 pids=()
 for index in "${!SETTING_IDS[@]}"; do
   setting_id="${SETTING_IDS[index]}"
@@ -60,7 +60,7 @@ for index in "${!SETTING_IDS[@]}"; do
 done
 wait_jobs "${pids[@]}"
 
-echo "[3/5] Recording original-repository five-image metrics (not paper aggregates)"
+echo "[3/3] Recording original-repository five-image metrics (not paper aggregates)"
 pids=()
 for index in "${!SETTING_IDS[@]}"; do
   setting_id="${SETTING_IDS[index]}"
@@ -72,31 +72,7 @@ for index in "${!SETTING_IDS[@]}"; do
 done
 wait_jobs "${pids[@]}"
 
-echo "[4/5] Running DeepInv on the exact same fixtures"
-pids=()
-for index in "${!SETTING_IDS[@]}"; do
-  setting_id="${SETTING_IDS[index]}"
-  "${PYTHON[@]}" reproduction/diffpir/run_deepinv.py \
-    --setting "${ROOT}/reproduction/diffpir/settings/${setting_id}.json" \
-    --fixture-id "${setting_id}" --run-id "${RUN_ID}" \
-    --checkpoint "${CHECKPOINT}" --device "${DEVICES[index]}" \
-    --artifact-root "${ARTIFACT_ROOT}" &
-  pids+=("$!")
-done
-wait_jobs "${pids[@]}"
-
-echo "[5/5] Comparing tensors/metrics and rendering figures"
-for index in "${!SETTING_IDS[@]}"; do
-  setting_id="${SETTING_IDS[index]}"
-  run_dir="${ARTIFACT_ROOT}/runs/diffpir/${setting_id}/${RUN_ID}"
-  "${PYTHON[@]}" reproduction/dps/compare.py \
-    --setting "${ROOT}/reproduction/diffpir/settings/${setting_id}.json" \
-    --fixture-id "${setting_id}" --run-id "${RUN_ID}" \
-    --metric-device "${DEVICES[index]}" --artifact-root "${ARTIFACT_ROOT}"
-  "${PYTHON[@]}" reproduction/diffpir/visualize_deblur.py \
-    --fixture-dir "${ARTIFACT_ROOT}/fixtures/${setting_id}" --run-dir "${run_dir}"
-done
-
-echo "Completed one task only: bicubic SR x4"
+echo "Stopped at the original-repository paper gate; DeepInv was not started."
+echo "Review: ${ROOT}/reproduction/diffpir/reports/sr4_reference_gate_20260905.zh-CN.md"
 echo "Run ID: ${RUN_ID}"
 echo "Results: ${ARTIFACT_ROOT}/runs/diffpir/*/${RUN_ID}"

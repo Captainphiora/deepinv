@@ -1,6 +1,6 @@
 # DiffPIR 论文基准完整 setting
 
-> 状态：论文 setting 已核对；Gaussian deblur 与 motion deblur 已按用户指定的 `demo_test` 五图完成小规模对齐。论文数值只作 100 图基准参考，不与五图均值混为一谈。
+> 状态：论文 setting 已核对；Gaussian deblur 与 motion deblur 已按用户指定的 `demo_test` 五图完成小规模对齐。SR ×4 原始仓库论文门禁当前为 **BLOCKED**，尚未运行 DeepInv 正式五图对齐。论文数值只作 100 图基准参考，不与五图均值混为一谈。
 
 ## 1. 范围与口径
 
@@ -280,6 +280,11 @@ SR `comparison.json` 中 PSNR/SSIM 从 `.pt` 浮点 RGB 图像计算，裁去四
 
 ## 11. 当前逐任务执行方案
 
+所有任务执行前先应用总工作流的三个串行 gate：参数/时间步审计 → 原始仓库论文门禁
+→ DeepInv 跨仓库门禁。每份任务实验报告必须直接展开最终参数和实际 timestep，不得
+只给 setting ID。当前 SR 门禁报告见
+[`reports/sr4_reference_gate_20260905.zh-CN.md`](reports/sr4_reference_gate_20260905.zh-CN.md)。
+
 论文完整 deblur 矩阵共有 12 个 setting：
 
 - FFHQ：2 种 blur × 2 种噪声 × 2 种 NFE，共 8 个；
@@ -305,6 +310,6 @@ SR `comparison.json` 中 PSNR/SSIM 从 `.pt` 浮点 RGB 图像计算，裁去四
 
 第二阶段 motion deblur 已完成：仍使用上述五张图，依次运行 noisy/noiseless × 20/100 NFE 四组 setting；motion kernel 固定为 61×61、intensity=0.5，并按官方 `case_index*10` 种子及两次 `Kernel` 构造顺序生成。四组比较均 PASS，证书见 [`certifications/motion_deblur_ffhq5_v1.json`](certifications/motion_deblur_ffhq5_v1.json)。
 
-第三阶段进入 SR ×4：同样五张图，noisy 20/100 NFE 分别使用 `(lambda,zeta)=(8,0.4)/(8,0.2)`，noiseless 20/100 NFE 分别使用 `(9,0.2)/(6,0.3)`。入口为 `reproduce_sr4.sh`。本任务完成后停止汇报。
+第三阶段进入 SR ×4：同样五张图，noisy 20/100 NFE 分别使用 `(lambda,zeta)=(8,0.4)/(8,0.2)`，noiseless 20/100 NFE 分别使用 `(9,0.2)/(6,0.3)`。linear beta schedule 和 quadratic timestep subsequence 均已对齐。原始仓库 run `sr4-20260905T151214Z` 已完成，但 noiseless/20 NFE 出现明显异常，门禁为 `BLOCKED`；DeepInv 正式阶段已停止。入口 `reproduce_sr4.sh` 在门禁解除前也只运行原始侧。本任务完成后停止汇报。
 
 剩余第四阶段是论文 setting 的 inpainting：box/random × 20/100 NFE，共四组无噪声配置；早期三图 random/NFE=20/lambda=1 demo 认证不覆盖这一组。

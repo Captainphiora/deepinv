@@ -57,7 +57,7 @@ bash reproduction/diffpir/reproduce_motion_deblur.sh
 
 ## Bicubic SR ×4（第三阶段）
 
-以下脚本固定同样五张图片和四组有噪/无噪 × 20/100 NFE 论文参数，按官方 → 官方指标 → DeepInv → 比较与可视化的顺序执行：
+以下脚本固定同样五张图片和四组有噪/无噪 × 20/100 NFE 论文参数。当前 SR 原始仓库论文门禁尚未解除，因此脚本只执行官方仓库和官方指标阶段，不会自动启动 DeepInv：
 
 ```bash
 bash reproduction/diffpir/reproduce_sr4.sh
@@ -66,3 +66,5 @@ bash reproduction/diffpir/reproduce_sr4.sh
 环境使用仓库 `.venv` 和个人目录的 uv wrapper；需要已安装 `reproduction` extra（包括通过 `uv add --optional reproduction opencv-python-headless` 记录的官方初始化依赖）。如需从锁文件重建环境，在仓库根目录执行 `/mnt/afs/L202500464/uv-env-tool.sh --proxy off sync --locked --extra reproduction`。
 
 官方测量为带抗混叠的 MATLAB 风格 bicubic resize，solver 为官方 25×25 MAT kernel 的圆周卷积加抽取；两者不完全等价，详细差异见论文配置文档中的 SR 小节。两边读取相同 `.pt` 测量、kernel、OpenCV 上采样初始图和全部随机量。SR PSNR/SSIM 裁边 4，LPIPS 不裁边，全部口径记录在 `comparison.json.metric_protocol`；可视化重用独立的 `visualize_deblur.py`。
+
+参数、实际 timestep、原始仓库五图指标和门禁结论见 [`reports/sr4_reference_gate_20260905.zh-CN.md`](reports/sr4_reference_gate_20260905.zh-CN.md)。只有原始侧结果得到确认后，才恢复 DeepInv 与比较阶段。

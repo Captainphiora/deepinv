@@ -36,6 +36,11 @@ def main() -> None:
     root = artifact_root(args.artifact_root)
     fixture = fixture_dir(root, args.fixture_id)
     fixture_manifest = read_json(fixture / "manifest.json")
+    schedule = load_record(
+        fixture,
+        fixture_manifest["schedule"],
+        required=("sampled_timesteps",),
+    )
     output_dir = run_dir(root, setting["id"], args.run_id, "diffpir")
     run_manifest = read_json(output_dir / "manifest.json")
     if run_manifest["setting_sha256"] != file_sha256(setting_file):
@@ -81,6 +86,18 @@ def main() -> None:
         "cases": cases,
         "mean": mean,
         "paper_reference": setting.get("paper_reference"),
+        "parameter_audit": {
+            "status": "RECORDED",
+            "setting_sha256": file_sha256(setting_file),
+            "algorithm": setting["algorithm"],
+            "task": setting["task"],
+            "model": setting["model"],
+            "sampler": setting["sampler"],
+            "randomness": setting["randomness"],
+            "reference": setting["reference"],
+            "sampled_timesteps": schedule["sampled_timesteps"].tolist(),
+            "schedule_tensor_sha256": fixture_manifest["schedule_tensor_sha256"],
+        },
         "paper_metrics_comparable": False,
         "paper_metrics_note": (
             "This fixed five-image demo run is not the paper's 100-image aggregate; "
