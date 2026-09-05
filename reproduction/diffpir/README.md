@@ -4,7 +4,7 @@
 [`PAPER_BENCHMARK_SETTINGS.zh-CN.md`](PAPER_BENCHMARK_SETTINGS.zh-CN.md)。
 
 This directory aligns DeepInv's `DiffPIR` with the official DiffPIR
-`main_ddpir.py` inpainting path at commit
+inpainting and deblurring paths at commit
 `2a9898129a1b274131b98746e5b364bc20adc1e1`.
 
 The fixed setting uses the first three `demo_test` FFHQ images, an official
@@ -31,7 +31,7 @@ raw-tensor differences, and trajectory-probe differences.
 CLI options for harness development, but they are not needed for the normal
 reproduction command.
 
-## Gaussian deblur（当前第一阶段）
+## Gaussian deblur（已完成）
 
 以下脚本固定使用 `DiffPIR/testsets/demo_test` 的五张 PNG、论文的 61×61 / std=3.0 Gaussian kernel，并覆盖有/无测量噪声及 20/100 NFE 四组论文参数：
 
@@ -43,7 +43,7 @@ bash reproduction/diffpir/reproduce_gaussian_deblur.sh
 
 五图四组 setting 已于 run `gaussian-deblur-20260904T161716Z` 全部通过；固定结果摘要与 artifact SHA256 见 [`certifications/gaussian_deblur_ffhq5_v1.json`](certifications/gaussian_deblur_ffhq5_v1.json)。
 
-## Motion deblur（当前第二阶段）
+## Motion deblur（已完成）
 
 以下脚本同样固定五张 `demo_test` 图片，使用 61×61、intensity=0.5 的逐图 motion kernel，并覆盖有/无测量噪声及 20/100 NFE：
 
@@ -52,3 +52,5 @@ bash reproduction/diffpir/reproduce_motion_deblur.sh
 ```
 
 脚本固定并校验外部 `motionblur` commit 与源码 SHA256；每张图最终使用的第二次生成 kernel 会直接保存到 `.pt`。执行顺序和 Gaussian deblur 相同，且不接受命令行参数。
+
+五图四组 setting 已于 run `motion-deblur-20260905T140737Z` 全部通过；固定结果摘要、外部 kernel 依赖版本与 artifact SHA256 见 [`certifications/motion_deblur_ffhq5_v1.json`](certifications/motion_deblur_ffhq5_v1.json)。

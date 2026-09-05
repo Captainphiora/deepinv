@@ -1,6 +1,6 @@
 # DiffPIR 论文基准完整 setting
 
-> 状态：论文 setting 已核对；Gaussian deblur 按用户指定的 `demo_test` 五图执行小规模对齐。论文数值只作 100 图基准参考，不与五图均值混为一谈。
+> 状态：论文 setting 已核对；Gaussian deblur 与 motion deblur 已按用户指定的 `demo_test` 五图完成小规模对齐。论文数值只作 100 图基准参考，不与五图均值混为一谈。
 
 ## 1. 范围与口径
 
@@ -288,4 +288,4 @@ kernel_std_i = 3.0 * abs(np.random.rand() * 2 + 1)
 
 第一阶段结束即停止，不自动继续 motion deblur、SR 或 inpainting 论文 setting，等待用户确认。
 
-第二阶段在用户确认后进入 motion deblur：仍使用上述五张图，依次运行 noisy/noiseless × 20/100 NFE 四组 setting；motion kernel 固定为 61×61、intensity=0.5，并按官方 `case_index*10` 种子及两次 `Kernel` 构造顺序生成。完成后停止，等待下一项确认。
+第二阶段 motion deblur 已完成：仍使用上述五张图，依次运行 noisy/noiseless × 20/100 NFE 四组 setting；motion kernel 固定为 61×61、intensity=0.5，并按官方 `case_index*10` 种子及两次 `Kernel` 构造顺序生成。四组比较均 PASS，证书见 [`certifications/motion_deblur_ffhq5_v1.json`](certifications/motion_deblur_ffhq5_v1.json)。当前停止，等待下一项确认。

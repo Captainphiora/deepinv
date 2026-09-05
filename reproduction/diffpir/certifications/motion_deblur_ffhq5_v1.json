@@ -1,0 +1,129 @@
+{
+  "schema_version": 2,
+  "status": "PASS",
+  "task": "motion_deblur",
+  "scope": {
+    "dataset": "DiffPIR/testsets/demo_test",
+    "images": 5,
+    "kernel": "61x61 per-case motion kernel, intensity=0.5, circular convolution",
+    "kernel_seed_rule": "case_index*10; keep the second official Kernel construction",
+    "measurement_noise_sigma": [0.0, 0.05],
+    "nfe": [20, 100],
+    "paper_metrics_comparable": false,
+    "note": "Fixed five-image alignment; paper values use 100 images and FID is not computed here."
+  },
+  "run_id": "motion-deblur-20260905T140737Z",
+  "implementations": {
+    "reference_revision": "2a9898129a1b274131b98746e5b364bc20adc1e1",
+    "deepinv_revision": "8885c5d876a20367dffa63b71e059af985b163e0",
+    "checkpoint_sha256": "81d535743156ec6be34d8668e6920da94f0614074d7793a16c8fa9e306237faa",
+    "motionblur_revision": "578137887b2067c532bd4e422ff5afdcabfccebf",
+    "motionblur_source_sha256": "71c81f9249d88dfdabbdb6481f07181a32844179fb7affe1f62836a9348815fc",
+    "deblur_prox": "Pure-Torch port of the official float32 FFT evaluation order; same closed-form objective as DeepInv BlurFFT.prox_l2."
+  },
+  "environment": {
+    "python": "3.10.20",
+    "torch": "2.14.0+cu130",
+    "numpy": "2.2.6",
+    "cuda": "13.0",
+    "cudnn": "92400",
+    "gpu_name": "NVIDIA GeForce RTX 5090",
+    "gpu_compute_capability": [12, 0],
+    "deterministic_algorithms": true,
+    "allow_tf32": false
+  },
+  "settings": [
+    {
+      "id": "ffhq256_motion61_intensity05_sigma005_diffpir_quad20_v1",
+      "measurement_noise_sigma": 0.05,
+      "nfe": 20,
+      "lambda": 7.0,
+      "zeta": 0.8,
+      "setting_sha256": "8c7e2ac95b9da2d3e77cc7bf54b5658aa630f1b603fa68486d801d6a5d5e9dfc",
+      "fixture_manifest_sha256": "55b32cf4e9d74b205c2842f5c69da3e2e6aeed69e0914d71be9d84498ffd83a9",
+      "paper_reference": {"dataset_size": 100, "metrics_reported": false},
+      "mean": {
+        "reference": {"psnr_db": 26.629352873533794, "ssim": 0.7954616904258728, "lpips": 0.24259020984172822},
+        "deepinv": {"psnr_db": 26.62935282732649, "ssim": 0.7954616785049439, "lpips": 0.24258958399295807},
+        "delta": {"psnr_db": 4.6207304649215075e-08, "ssim": 1.1920928910669204e-08, "lpips": 6.258487701416016e-07}
+      },
+      "max_case_delta": {"psnr_db": 4.410259322185084e-07, "ssim": 1.1920928955078125e-07, "lpips": 3.993511199951172e-06},
+      "max_final": {"mae": 2.4995385676055787e-07, "relative_l2": 5.357359262136625e-07},
+      "max_trajectory": {"mae": 2.8133842988609103e-07, "relative_l2": 5.329526332312715e-07},
+      "artifacts": {
+        "run_manifest_sha256": "7cdf9087e16af932d175bfb3442d55fd15902edda4154e3a928ac36614bbd78b",
+        "comparison_sha256": "d6aec567c73dee2444313c7b175c01d23389b1131b2bf7675cde96f6dfee1d3b",
+        "visualization_sha256": "238fb8e66d503996f191c777d1de27d91b602278082c6bbcce30a61fbcd1fed9"
+      }
+    },
+    {
+      "id": "ffhq256_motion61_intensity05_sigma005_diffpir_quad100_v1",
+      "measurement_noise_sigma": 0.05,
+      "nfe": 100,
+      "lambda": 7.0,
+      "zeta": 0.4,
+      "setting_sha256": "d4a7f3e30cafb7df536c39e9c5b3ee421beedfe681d745dc7cce3cafdd86cf87",
+      "fixture_manifest_sha256": "fd42d7e8fceba9daaeeb736302c6e50846bfc10ad2e4eee5048984f84204a534",
+      "paper_reference": {"dataset_size": 100, "psnr_db": 26.57, "fid": 65.78, "lpips": 0.255},
+      "mean": {
+        "reference": {"psnr_db": 26.12122209952856, "ssim": 0.7866160869598389, "lpips": 0.23103742003440858},
+        "deepinv": {"psnr_db": 26.121221853625435, "ssim": 0.7866161942481995, "lpips": 0.23103687763214112},
+        "delta": {"psnr_db": 2.4590312364125566e-07, "ssim": 1.0728836064011205e-07, "lpips": 5.424022674616058e-07}
+      },
+      "max_case_delta": {"psnr_db": 8.558580191220244e-07, "ssim": 2.384185791015625e-07, "lpips": 1.6689300537109375e-06},
+      "max_final": {"mae": 2.01085348520517e-07, "relative_l2": 4.652015522190439e-07},
+      "max_trajectory": {"mae": 3.2444666449767584e-07, "relative_l2": 4.608942861244067e-07},
+      "artifacts": {
+        "run_manifest_sha256": "020a69683d956e30a25a643b254ae8bfbb5fc153493964c463867ccfd8acec3e",
+        "comparison_sha256": "3768f7932bc830a760560107f219a4f51326cf37dc1bed433ee50a94b879c05c",
+        "visualization_sha256": "c7a14d0383b7bb273d570a6e7389a2d45f77dce9e1dc7fc06349eef3eeae58eb"
+      }
+    },
+    {
+      "id": "ffhq256_motion61_intensity05_sigma000_diffpir_quad20_v1",
+      "measurement_noise_sigma": 0.0,
+      "nfe": 20,
+      "lambda": 25.0,
+      "zeta": 1.0,
+      "setting_sha256": "ef2c752e9052cd34f437027ef174cae5054985a6fcac62f9ec45dd75243bf645",
+      "fixture_manifest_sha256": "4927e92afc6349613d47d04a5b1fc9bac1e50ee688b5eb16730860e5b302883a",
+      "paper_reference": {"dataset_size": 100, "psnr_db": 37.03, "fid": 20.11, "lpips": 0.084},
+      "mean": {
+        "reference": {"psnr_db": 35.873697572278665, "ssim": 0.9392758846282959, "lpips": 0.11475848704576493},
+        "deepinv": {"psnr_db": 35.87369297633283, "ssim": 0.9392758727073669, "lpips": 0.1147581160068512},
+        "delta": {"psnr_db": 4.595945831908921e-06, "ssim": 1.1920929021691506e-08, "lpips": 3.7103891373235776e-07}
+      },
+      "max_case_delta": {"psnr_db": 6.355015905512573e-06, "ssim": 1.7881393432617188e-07, "lpips": 3.6209821701049805e-06},
+      "max_final": {"mae": 1.4571495823290093e-06, "relative_l2": 2.8668945325302084e-06},
+      "max_trajectory": {"mae": 3.617277232992322e-05, "relative_l2": 5.9467301871168624e-05},
+      "artifacts": {
+        "run_manifest_sha256": "dce95f28b547181466ab02424aeabd0604a594ff18cece9b809a5ad4a521bda4",
+        "comparison_sha256": "6fe0c5af0ae7b7715ddf78585c1caafe55c5e44a326c817ece6437e120b7f39f",
+        "visualization_sha256": "50b444ad4f9641c49a5aea689ed03a8b5d69938f16d16cb924e92fea7f4491e5"
+      }
+    },
+    {
+      "id": "ffhq256_motion61_intensity05_sigma000_diffpir_quad100_v1",
+      "measurement_noise_sigma": 0.0,
+      "nfe": 100,
+      "lambda": 7.0,
+      "zeta": 0.9,
+      "setting_sha256": "90810b09d5216ed3b39058b36a4f825433041b59a6a3ec4669160f6191761ed7",
+      "fixture_manifest_sha256": "9b1d1b077a7da2527b33dd80bd045ac2b6ff046bb17e4c3388f405a57176ded5",
+      "paper_reference": {"dataset_size": 100, "psnr_db": 37.53, "fid": 11.54, "lpips": 0.064},
+      "mean": {
+        "reference": {"psnr_db": 36.42725343847879, "ssim": 0.9495174646377563, "lpips": 0.09162021651864052},
+        "deepinv": {"psnr_db": 36.42724988678711, "ssim": 0.9495174407958984, "lpips": 0.091621033847332},
+        "delta": {"psnr_db": 3.551691683867375e-06, "ssim": 2.384185793236071e-08, "lpips": 8.173286914769928e-07}
+      },
+      "max_case_delta": {"psnr_db": 4.44041113212279e-06, "ssim": 1.7881393432617188e-07, "lpips": 2.473592758178711e-06},
+      "max_final": {"mae": 5.680989230150146e-07, "relative_l2": 1.1762457242054528e-06},
+      "max_trajectory": {"mae": 7.056560966608079e-05, "relative_l2": 0.00010416547464835823},
+      "artifacts": {
+        "run_manifest_sha256": "e41f31553de78e0eb3b7fa84d051fd676161c3d1b3465c9381a7f7c8521e98e6",
+        "comparison_sha256": "641b4d0221ca4d495b0f7f69b35bbc8b2305a81734ef23b26e84bd3d2f1e19ee",
+        "visualization_sha256": "85c981c164ed36b36c2556d4b8cd332f1552ee7273468a23f756752b0edcbd2c"
+      }
+    }
+  ]
+}
