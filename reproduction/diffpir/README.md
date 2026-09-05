@@ -55,16 +55,16 @@ bash reproduction/diffpir/reproduce_motion_deblur.sh
 
 五图四组 setting 已于 run `motion-deblur-20260905T140737Z` 全部通过；固定结果摘要、外部 kernel 依赖版本与 artifact SHA256 见 [`certifications/motion_deblur_ffhq5_v1.json`](certifications/motion_deblur_ffhq5_v1.json)。
 
-## Bicubic SR ×4（第三阶段）
+## Bicubic SR ×4（对齐中）
 
-以下脚本固定同样五张图片和四组有噪/无噪 × 20/100 NFE 论文参数。`v2` 已修复初始噪声与第一步 transition noise 意外相同的问题；原始仓库五图 sanity gate 已通过。脚本暂时仍只执行官方仓库和官方指标阶段，等待确认后再启动 DeepInv：
+以下脚本固定同样五张图片和四组有噪/无噪 × 20/100 NFE 论文参数。`v2` 已修复初始噪声与第一步 transition noise 意外相同的问题；原始仓库五图 sanity gate 已通过。脚本依次生成 fixture、运行官方仓库、记录官方指标、运行 DeepInv、比较并可视化：
 
 ```bash
 bash reproduction/diffpir/reproduce_sr4.sh
 ```
 
-环境使用仓库 `.venv` 和个人目录的 uv wrapper；需要已安装 `reproduction` extra（包括通过 `uv add --optional reproduction opencv-python-headless` 记录的官方初始化依赖）。如需从锁文件重建环境，在仓库根目录执行 `/mnt/afs/L202500464/uv-env-tool.sh --proxy off sync --locked --extra reproduction`。
+官方 fixture 与 reference 使用 `/mnt/afs/L202500464/DiffPIR/.venv`，DeepInv、统一指标和可视化使用本仓库 `.venv`；两边均通过个人目录的 uv wrapper 启动，共享下载缓存但不共享环境。脚本使用带 `_separate_uv_v1` 后缀的新 fixture，避免覆盖早期同环境产物。DeepInv 需要已安装 `reproduction` extra；如需从锁文件重建，在仓库根目录执行 `/mnt/afs/L202500464/uv-env-tool.sh --proxy off sync --locked --extra reproduction`。
 
 官方测量为带抗混叠的 MATLAB 风格 bicubic resize，solver 为官方 25×25 MAT kernel 的圆周卷积加抽取；两者不完全等价，详细差异见论文配置文档中的 SR 小节。两边读取相同 `.pt` 测量、kernel、OpenCV 上采样初始图和全部随机量。SR PSNR/SSIM 裁边 4，LPIPS 不裁边，全部口径记录在 `comparison.json.metric_protocol`；可视化重用独立的 `visualize_deblur.py`。
 
-参数、实际 timestep、原始仓库五图指标和门禁结论见 [`reports/sr4_reference_gate_20260905.zh-CN.md`](reports/sr4_reference_gate_20260905.zh-CN.md)。只有原始侧结果得到确认后，才恢复 DeepInv 与比较阶段。
+参数、实际 timestep、原始仓库五图指标和门禁结论见 [`reports/sr4_reference_gate_20260905.zh-CN.md`](reports/sr4_reference_gate_20260905.zh-CN.md)。独立环境正式认证结果将在运行完成后补入 certification 与最终汇总。

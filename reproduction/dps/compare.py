@@ -36,14 +36,49 @@ def differences(actual: torch.Tensor, expected: torch.Tensor) -> dict[str, float
 
 
 def alignment_environment(value: dict) -> dict:
-    """Remove GPU location while retaining the numerical execution environment."""
-    normalized = dict(value)
-    device = normalized.pop("device", None)
-    normalized["device_type"] = torch.device(device).type if device else None
-    if normalized.get("gpu") is not None:
-        normalized["gpu"] = dict(normalized["gpu"])
-        normalized["gpu"].pop("uuid", None)
-    return normalized
+    """Return cross-environment constraints, ignoring versions and GPU location."""
+    device = value.get("device")
+    gpu = value.get("gpu")
+    return {
+        "device_type": torch.device(device).type if device else None,
+        "gpu": (
+            {
+                "name": gpu.get("name"),
+                "compute_capability": gpu.get("compute_capability"),
+            }
+            if gpu is not None
+            else None
+        ),
+        "deterministic_algorithms": value.get("deterministic_algorithms"),
+        "cudnn_benchmark": value.get("cudnn_benchmark"),
+        "cuda_matmul_allow_tf32": value.get("cuda_matmul_allow_tf32"),
+        "cudnn_allow_tf32": value.get("cudnn_allow_tf32"),
+    }
+
+
+def validate_alignment_environments(
+    reference: dict, deepinv: dict, *, separate_uv_projects: bool
+) -> None:
+    reference_environment = reference.get("environment")
+    deepinv_environment = deepinv.get("environment")
+    if (
+        not reference_environment
+        or not deepinv_environment
+        or alignment_environment(reference_environment)
+        != alignment_environment(deepinv_environment)
+    ):
+        raise ValueError(
+            "reference and DeepInv must use matching deterministic settings and GPU models"
+        )
+    if separate_uv_projects:
+        prefixes = {
+            reference_environment.get("python_prefix"),
+            deepinv_environment.get("python_prefix"),
+        }
+        if None in prefixes or len(prefixes) != 2:
+            raise ValueError(
+                "this setting requires distinct recorded reference and DeepInv uv environments"
+            )
 
 
 def image_metrics(
@@ -102,6 +137,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--case", action="append", help="case id; repeat as needed")
     parser.add_argument("--artifact-root")
     parser.add_argument("--metric-device", default="cpu")
+    parser.add_argument("--separate-uv-projects", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -143,17 +179,11 @@ def main() -> None:
         raise ValueError("fixture manifest changed after the run")
 
     implementations = run_manifest.get("implementations", {})
-    reference_environment = implementations.get("reference", {}).get("environment")
-    deepinv_environment = implementations.get("deepinv", {}).get("environment")
-    if (
-        not reference_environment
-        or not deepinv_environment
-        or alignment_environment(reference_environment)
-        != alignment_environment(deepinv_environment)
-    ):
-        raise ValueError(
-            "reference and DeepInv must use the same software environment and GPU model"
-        )
+    validate_alignment_environments(
+        implementations.get("reference", {}),
+        implementations.get("deepinv", {}),
+        separate_uv_projects=args.separate_uv_projects,
+    )
     reference_checkpoint = implementations["reference"].get("checkpoint_sha256")
     if not reference_checkpoint or reference_checkpoint != implementations[
         "deepinv"
@@ -298,6 +328,13 @@ def main() -> None:
         "fixture_id": args.fixture_id,
         "run_id": args.run_id,
         "thresholds": thresholds,
+        "environment_policy": (
+            "separate_uv_projects_v1" if args.separate_uv_projects else "legacy"
+        ),
+        "environments": {
+            implementation: implementations[implementation]["environment"]
+            for implementation in ("reference", "deepinv")
+        },
         "cases": results,
         "mean": {
             "reference": mean_reference,

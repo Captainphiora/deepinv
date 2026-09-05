@@ -15,18 +15,31 @@ description: 在 DeepInv 中复现扩散模型或 flow matching 的反问题求�
 
 ## Python 环境
 
-所有 Python 命令必须在同一条 shell 命令中先显式进入 DeepInv 根目录，再通过个人
-目录的 uv wrapper 启动；不得依赖执行工具单独传入的工作目录：
+参考实现和 DeepInv 必须使用各自仓库的独立 uv 环境，不能用 DeepInv 的环境运行
+参考算法。每条 Python 命令都在同一条 shell 命令中先显式进入该命令所属项目根目录，
+再通过个人目录的 uv wrapper 启动；不得依赖执行工具单独传入的工作目录：
 
 ```bash
+# DeepInv 实现、公共比较器和可视化
 cd /mnt/afs/L202500464/deepinv && \
+  /mnt/afs/L202500464/uv-env-tool.sh --proxy off uv run --no-sync python ...
+
+# 参考实现；把路径替换成当前算法的官方仓库
+cd /mnt/afs/L202500464/DiffPIR && \
   /mnt/afs/L202500464/uv-env-tool.sh --proxy off uv run --no-sync python ...
 ```
 
-该命令必须解析到 `/mnt/afs/L202500464/deepinv/.venv/bin/python*`。只有锁文件或依赖
-声明发生变化时才运行 `uv sync`；缺少依赖时必须用 `uv add` 写入项目，不能临时
-`pip install`。`uv run` 暂时没有输出时先检查其进程或继续等待，不能据此判定缺包、
-重建环境或切换到系统 Python。
+命令必须解析到所属项目的 `.venv/bin/python*`。若锁定源码位于 detached worktree，
+可以使用该算法主 checkout 的 uv 环境执行 worktree 中的源码，但必须分别记录环境
+项目路径、实际源码路径和源码 commit。生成官方 measurement 或 kernel 的 fixture
+步骤也属于参考侧；统一指标计算属于比较侧，应在 DeepInv 环境中对两边已保存的
+tensor 一次性计算。
+
+只有对应项目的锁文件或依赖声明发生变化时才运行 `uv sync`；缺少依赖时必须在依赖
+所属项目中用 `uv add` 写入，不能临时 `pip install`，也不能把包加到另一个项目来
+迁就当前命令。各项目复用个人目录的 uv 下载缓存，但不得共用 `.venv`。`uv run`
+暂时没有输出时先检查其进程或继续等待，不能据此判定缺包、重建环境或切换到系统
+Python。
 
 ## 确定性产物约定
 
@@ -56,10 +69,13 @@ noise 逐元素相同，并把 stream policy 与各流 seed 写入 manifest。
 4. 修改代码前先归类偏差：输入、模型适配、schedule/timestep、RNG、physics/noise、条件更新顺序、精度/设备或序列化。
 5. 修复最早的根因，重新运行小样本；通过后再运行完整实验集。
 
-精度认证在同一依赖环境和同型号 GPU 上跨仓库比较 DeepInv 与原始实现；同型号的
+精度认证使用各仓库锁定的独立依赖环境，并在同型号 GPU 上跨仓库比较 DeepInv 与
+原始实现；Torch、CUDA、cuDNN、NumPy 等版本差异必须记录但不要求相同。同型号的
 不同 GPU 可以并行运行。GPU 序号和 UUID 只记录为 provenance，不作为通过条件。
 CPU/GPU 跨设备一致性不属于验收项。若结果超出显式容差，先把失败 case 的两个实现
-放到同一张 GPU 上重跑，以区分硬件与实现偏差；不得通过放宽容差掩盖系统性漂移。
+放到同一张 GPU 上重跑；仍失败时可以增加“同一依赖环境”的诊断运行，以区分硬件、
+依赖和实现偏差，但诊断运行不能替代各自独立环境的正式认证，也不得通过放宽容差
+掩盖系统性漂移。
 
 ## 项目布局
 

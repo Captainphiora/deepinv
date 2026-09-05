@@ -13,7 +13,12 @@ from _common import (
     tensor_dict_sha256,
     update_run_manifest,
 )
-from compare import alignment_environment, differences, image_metrics
+from compare import (
+    alignment_environment,
+    differences,
+    image_metrics,
+    validate_alignment_environments,
+)
 
 
 class HarnessTest(unittest.TestCase):
@@ -109,7 +114,12 @@ class HarnessTest(unittest.TestCase):
     def test_alignment_environment_ignores_gpu_location(self):
         first = {
             "torch": "test",
+            "python_prefix": "/reference/.venv",
             "device": "cuda:0",
+            "deterministic_algorithms": True,
+            "cudnn_benchmark": False,
+            "cuda_matmul_allow_tf32": False,
+            "cudnn_allow_tf32": False,
             "gpu": {
                 "name": "same-model",
                 "compute_capability": [12, 0],
@@ -118,10 +128,25 @@ class HarnessTest(unittest.TestCase):
         }
         second = {
             **first,
+            "torch": "different-version",
+            "python_prefix": "/deepinv/.venv",
             "device": "cuda:3",
             "gpu": {**first["gpu"], "uuid": "gpu-3"},
         }
         self.assertEqual(alignment_environment(first), alignment_environment(second))
+        validate_alignment_environments(
+            {"environment": first},
+            {"environment": second},
+            separate_uv_projects=True,
+        )
+
+        second["python_prefix"] = first["python_prefix"]
+        with self.assertRaisesRegex(ValueError, "distinct recorded"):
+            validate_alignment_environments(
+                {"environment": first},
+                {"environment": second},
+                separate_uv_projects=True,
+            )
 
         second["gpu"]["name"] = "different-model"
         self.assertNotEqual(alignment_environment(first), alignment_environment(second))

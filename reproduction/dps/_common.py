@@ -152,6 +152,8 @@ def environment(device: str) -> dict:
         }
     return {
         "python": platform.python_version(),
+        "python_executable": str(Path(sys.executable).resolve()),
+        "python_prefix": str(Path(sys.prefix).resolve()),
         "torch": torch.__version__,
         "numpy": np.__version__,
         "cuda": torch.version.cuda,
