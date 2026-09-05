@@ -18,6 +18,7 @@ if str(DPS_DIR) not in sys.path:
     sys.path.insert(0, str(DPS_DIR))
 
 from _common import (  # noqa: E402
+    REPO_ROOT,
     artifact_root,
     file_sha256,
     fixture_dir,
@@ -125,7 +126,8 @@ def main() -> None:
     if task["name"] == "super_resolution":
         if not args.reference_repo:
             raise ValueError("--reference-repo is required for SR")
-        from run_reference import verify_reference
+        sys.path.insert(0, str(REPO_ROOT))
+        from reproduction.diffpir.run_reference import verify_reference
         from scipy.io import loadmat
         import cv2
 
