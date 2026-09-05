@@ -4,7 +4,7 @@
 [`PAPER_BENCHMARK_SETTINGS.zh-CN.md`](PAPER_BENCHMARK_SETTINGS.zh-CN.md)。
 
 This directory aligns DeepInv's `DiffPIR` with the official DiffPIR
-inpainting and deblurring paths at commit
+inpainting, deblurring and super-resolution paths at commit
 `2a9898129a1b274131b98746e5b364bc20adc1e1`.
 
 The fixed setting uses the first three `demo_test` FFHQ images, an official
@@ -54,3 +54,15 @@ bash reproduction/diffpir/reproduce_motion_deblur.sh
 脚本固定并校验外部 `motionblur` commit 与源码 SHA256；每张图最终使用的第二次生成 kernel 会直接保存到 `.pt`。执行顺序和 Gaussian deblur 相同，且不接受命令行参数。
 
 五图四组 setting 已于 run `motion-deblur-20260905T140737Z` 全部通过；固定结果摘要、外部 kernel 依赖版本与 artifact SHA256 见 [`certifications/motion_deblur_ffhq5_v1.json`](certifications/motion_deblur_ffhq5_v1.json)。
+
+## Bicubic SR ×4（第三阶段）
+
+以下脚本固定同样五张图片和四组有噪/无噪 × 20/100 NFE 论文参数，按官方 → 官方指标 → DeepInv → 比较与可视化的顺序执行：
+
+```bash
+bash reproduction/diffpir/reproduce_sr4.sh
+```
+
+环境使用仓库 `.venv` 和个人目录的 uv wrapper；需要已安装 `reproduction` extra（包括通过 `uv add --optional reproduction opencv-python-headless` 记录的官方初始化依赖）。如需从锁文件重建环境，在仓库根目录执行 `/mnt/afs/L202500464/uv-env-tool.sh --proxy off sync --locked --extra reproduction`。
+
+官方测量为带抗混叠的 MATLAB 风格 bicubic resize，solver 为官方 25×25 MAT kernel 的圆周卷积加抽取；两者不完全等价，详细差异见论文配置文档中的 SR 小节。两边读取相同 `.pt` 测量、kernel、OpenCV 上采样初始图和全部随机量。SR PSNR/SSIM 裁边 4，LPIPS 不裁边，全部口径记录在 `comparison.json.metric_protocol`；可视化重用独立的 `visualize_deblur.py`。

@@ -239,6 +239,21 @@ kernel_std_i = 3.0 * abs(np.random.rand() * 2 + 1)
 
 ## 9. 官方 demo 默认值不能当成论文超参数
 
+### SR ×4 的测量与 solver 算子边界
+
+本项目对齐 `main_ddpir_sisr.py` 的 `sr_mode='blur'`、`classical_degradation=False` 分支。该分支的实际路径为：
+
+1. float32 RGB `[0,1]` 输入，经官方 `utils_image.imresize_np(..., 1/4, antialiasing=True)` 生成 64×64 测量；边界按对称复制处理。
+2. 在 LR 测量上加入 AWGN；保存干净测量、实际噪声和最终 `y`。
+3. 用 OpenCV `INTER_CUBIC` 把 `y` 放大到 256×256，随后按 VP 公式加入已固定的初始噪声；这里没有 deblur 的 `t_y` 修正。
+4. 数据闭式解使用 `kernels/kernels_bicubicx234.mat` 的 ×4 kernel（25×25），算子为圆周卷积后从左上角每隔 4 像素抽取。保留官方 kernel 原值，不额外归一化。
+
+因此官方测量算子和闭式解所假设的算子并不完全相同。DeepInv 的 `DownsamplingMatlab(factor=4)` 与第 1 步接近；`Downsampling(filter=官方kernel, factor=4, padding='circular')` 对应第 4 步。第一张 `69037.png` 的检查中，前者相对官方测量的最大误差为 `3.5763e-7`，后者为 `0.0818887`，裁掉 LR 四像素边界后仍有 `0.00392482` 的最大误差。不能把两种算子宣称为严格等价。
+
+SR 对齐保留官方的上述差异：两边读取同一个官方测量 fixture，在 solver 中使用同一个 MAT kernel。DeepInv 的数据闭式解用纯 Torch 保留官方 FFT、频谱分块求均值与 float32 求值顺序；零插值张量须显式分配为连续 NCHW，避免极小 `rho` 放大不同布局下的浮点差异。该兼容层不调用官方 solver，也不改变扩散更新。
+
+SR `comparison.json` 中 PSNR/SSIM 从 `.pt` 浮点 RGB 图像计算，裁去四周 4 像素；LPIPS 使用完整图像，张量和轨迹误差使用完整未裁剪/未截断数据。`metric_protocol` 明确记录这些口径。此处 PSNR 未经 uint8 量化，与论文官方脚本的 uint8 PSNR 口径存在区别。
+
 固定 commit 的代码存在以下行为：
 
 | 入口 | 表面默认值 | 实际运行行为 | 与论文表格关系 |
@@ -288,4 +303,8 @@ kernel_std_i = 3.0 * abs(np.random.rand() * 2 + 1)
 
 第一阶段结束即停止，不自动继续 motion deblur、SR 或 inpainting 论文 setting，等待用户确认。
 
-第二阶段 motion deblur 已完成：仍使用上述五张图，依次运行 noisy/noiseless × 20/100 NFE 四组 setting；motion kernel 固定为 61×61、intensity=0.5，并按官方 `case_index*10` 种子及两次 `Kernel` 构造顺序生成。四组比较均 PASS，证书见 [`certifications/motion_deblur_ffhq5_v1.json`](certifications/motion_deblur_ffhq5_v1.json)。当前停止，等待下一项确认。
+第二阶段 motion deblur 已完成：仍使用上述五张图，依次运行 noisy/noiseless × 20/100 NFE 四组 setting；motion kernel 固定为 61×61、intensity=0.5，并按官方 `case_index*10` 种子及两次 `Kernel` 构造顺序生成。四组比较均 PASS，证书见 [`certifications/motion_deblur_ffhq5_v1.json`](certifications/motion_deblur_ffhq5_v1.json)。
+
+第三阶段进入 SR ×4：同样五张图，noisy 20/100 NFE 分别使用 `(lambda,zeta)=(8,0.4)/(8,0.2)`，noiseless 20/100 NFE 分别使用 `(9,0.2)/(6,0.3)`。入口为 `reproduce_sr4.sh`。本任务完成后停止汇报。
+
+剩余第四阶段是论文 setting 的 inpainting：box/random × 20/100 NFE，共四组无噪声配置；早期三图 random/NFE=20/lambda=1 demo 认证不覆盖这一组。

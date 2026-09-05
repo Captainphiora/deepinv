@@ -61,6 +61,15 @@ def verify_reference(repo: Path, commit: str, task: str) -> str:
         )
     elif task in {"gaussian_deblur", "motion_deblur"}:
         paths.extend(("main_ddpir_deblur.py", "utils/utils_sisr.py"))
+    elif task == "super_resolution":
+        paths.extend(
+            (
+                "main_ddpir_sisr.py",
+                "utils/utils_sisr.py",
+                "utils/utils_image.py",
+                "kernels/kernels_bicubicx234.mat",
+            )
+        )
     else:
         raise ValueError(f"unsupported DiffPIR reference task: {task}")
     status = subprocess.run(
@@ -151,8 +160,9 @@ def main() -> None:
     configure_determinism(setting["randomness"]["fixture_seed"])
     device = torch.device(args.device)
     model, diffusion = build_model(repo, checkpoint, device)
-    if task["name"] in {"gaussian_deblur", "motion_deblur"}:
+    if task["name"] in {"gaussian_deblur", "motion_deblur", "super_resolution"}:
         from utils import utils_sisr as sr
+    factor = task.get("factor", 1)
 
     schedule = load_record(
         fixture,
@@ -181,7 +191,7 @@ def main() -> None:
                 mask = tensors["mask"].to(device)
             else:
                 kernel = tensors["kernel"].to(device)
-                FB, FBC, F2B, FBFy = sr.pre_calculate(y, kernel, sf=1)
+                FB, FBC, F2B, FBFy = sr.pre_calculate(y, kernel, sf=factor)
             noise = load_record(
                 fixture,
                 case["transition_noise"],
@@ -215,7 +225,7 @@ def main() -> None:
                                 F2B,
                                 FBFy,
                                 rho.float().repeat(1, 1, 1, 1),
-                                sf=1,
+                                sf=factor,
                             )
                             .mul(2)
                             .sub(1)

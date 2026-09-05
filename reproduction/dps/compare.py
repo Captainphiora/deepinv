@@ -47,7 +47,11 @@ def alignment_environment(value: dict) -> dict:
 
 
 def image_metrics(
-    reconstruction: torch.Tensor, target: torch.Tensor, lpips_metric=None
+    reconstruction: torch.Tensor,
+    target: torch.Tensor,
+    lpips_metric=None,
+    *,
+    crop_border: int = 0,
 ) -> dict[str, float]:
     from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
@@ -57,6 +61,17 @@ def image_metrics(
         reconstruction_raw.add(1).div(2).squeeze(0).permute(1, 2, 0).cpu().numpy()
     )
     target_np = target_raw.add(1).div(2).squeeze(0).permute(1, 2, 0).cpu().numpy()
+    if (
+        not isinstance(crop_border, int)
+        or crop_border < 0
+        or 2 * crop_border >= min(target_np.shape[:2])
+    ):
+        raise ValueError("crop_border must be nonnegative and leave a nonempty image")
+    if crop_border:
+        reconstruction_np = reconstruction_np[
+            crop_border:-crop_border, crop_border:-crop_border
+        ]
+        target_np = target_np[crop_border:-crop_border, crop_border:-crop_border]
     result = {
         "psnr_db": float(
             peak_signal_noise_ratio(target_np, reconstruction_np, data_range=1.0)
@@ -69,9 +84,13 @@ def image_metrics(
     }
     if lpips_metric is not None:
         metric_device = next(lpips_metric.parameters()).device
-        result["lpips"] = lpips_metric(
-            reconstruction_raw.to(metric_device), target_raw.to(metric_device)
-        ).mean().item()
+        result["lpips"] = (
+            lpips_metric(
+                reconstruction_raw.to(metric_device), target_raw.to(metric_device)
+            )
+            .mean()
+            .item()
+        )
     return result
 
 
@@ -96,9 +115,7 @@ def main() -> None:
     cases = select_cases(manifest, args.case)
     if not cases:
         raise ValueError("fixture contains no selected cases")
-    output_dir = run_dir(
-        root, setting["id"], args.run_id, setting["algorithm"]["name"]
-    )
+    output_dir = run_dir(root, setting["id"], args.run_id, setting["algorithm"]["name"])
     output_path = output_dir / "comparison.json"
     if args.dry_run:
         print(
@@ -147,15 +164,14 @@ def main() -> None:
 
     lpips_metric = lpips.LPIPS(net="vgg").to(args.metric_device).eval()
     reference_records = {
-        record["id"]: record
-        for record in implementations["reference"]["cases"]
+        record["id"]: record for record in implementations["reference"]["cases"]
     }
     deepinv_records = {
-        record["id"]: record
-        for record in implementations["deepinv"]["cases"]
+        record["id"]: record for record in implementations["deepinv"]["cases"]
     }
 
     thresholds = setting["thresholds"]
+    crop_border = setting.get("metrics", {}).get("crop_border", 0)
     results = []
     all_passed = True
     for case in cases:
@@ -168,9 +184,7 @@ def main() -> None:
                 raise ValueError(
                     f"{implementation} output for {case_id} used a different fixture"
                 )
-        source = load_record(
-            fixture, case, required=("ground_truth", "x_init")
-        )
+        source = load_record(fixture, case, required=("ground_truth", "x_init"))
         reference = load_record(
             output_dir,
             reference_records[case_id],
@@ -197,16 +211,20 @@ def main() -> None:
             raise ValueError(f"timestep mismatch for case {case_id}")
         if not torch.equal(reference["noise_levels"], deepinv["noise_levels"]):
             raise ValueError(f"noise-level mismatch for case {case_id}")
-        if not torch.equal(
-            reference["trajectory_steps"], deepinv["trajectory_steps"]
-        ):
+        if not torch.equal(reference["trajectory_steps"], deepinv["trajectory_steps"]):
             raise ValueError(f"trajectory probe mismatch for case {case_id}")
 
         reference_metrics = image_metrics(
-            reference["reconstruction"], source["ground_truth"], lpips_metric
+            reference["reconstruction"],
+            source["ground_truth"],
+            lpips_metric,
+            crop_border=crop_border,
         )
         deepinv_metrics = image_metrics(
-            deepinv["reconstruction"], source["ground_truth"], lpips_metric
+            deepinv["reconstruction"],
+            source["ground_truth"],
+            lpips_metric,
+            crop_border=crop_border,
         )
         final_difference = differences(
             deepinv["reconstruction"], reference["reconstruction"]
@@ -225,16 +243,13 @@ def main() -> None:
             )
             passed = (
                 difference["mae"] <= thresholds["trajectory_mae"]
-                and difference["relative_l2"]
-                <= thresholds["trajectory_relative_l2"]
+                and difference["relative_l2"] <= thresholds["trajectory_relative_l2"]
             )
             probes.append({"step": step, **difference, "passed": passed})
 
         delta_psnr = abs(deepinv_metrics["psnr_db"] - reference_metrics["psnr_db"])
         delta_ssim = abs(deepinv_metrics["ssim"] - reference_metrics["ssim"])
-        delta_lpips = abs(
-            deepinv_metrics["lpips"] - reference_metrics["lpips"]
-        )
+        delta_lpips = abs(deepinv_metrics["lpips"] - reference_metrics["lpips"])
         case_passed = (
             all(probe["passed"] for probe in probes)
             and delta_psnr <= thresholds["per_case_delta_psnr_db"]
@@ -292,6 +307,13 @@ def main() -> None:
         },
         "passed": all_passed,
     }
+    if "metrics" in setting:
+        report["metric_protocol"] = {
+            "psnr_ssim": "float32 RGB in [0,1], clipped, no uint8 round trip",
+            "crop_border": crop_border,
+            "lpips": "VGG, full image in [-1,1], clipped",
+            "tensor_differences": "full raw tensors without clipping or cropping",
+        }
     write_json(output_path, report)
     print(f"{'PASS' if all_passed else 'FAIL'}: {output_path}")
     if not all_passed:

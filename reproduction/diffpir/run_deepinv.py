@@ -52,8 +52,15 @@ def official_diffpir_deblur_prox(
     y: torch.Tensor,
     kernel: torch.Tensor,
     gamma: float | torch.Tensor,
+    factor: int = 1,
 ) -> torch.Tensor:
-    """Torch port of DiffPIR's float32 FFT evaluation order for scale 1."""
+    """Torch port of DiffPIR's FFT order for circular blur and blur/decimation."""
+    if (
+        not isinstance(factor, int)
+        or factor < 1
+        or z.shape[-2:] != tuple(size * factor for size in y.shape[-2:])
+    ):
+        raise ValueError("factor must be a positive integer matching z/y spatial sizes")
     rho = torch.as_tensor(1 / gamma, dtype=z.dtype, device=z.device)
     rho = rho[(...,) + (None,) * (z.ndim - rho.ndim)]
     psf = torch.zeros(kernel.shape[:-2] + z.shape[-2:], dtype=z.dtype, device=z.device)
@@ -67,9 +74,25 @@ def official_diffpir_deblur_prox(
     transfer = torch.fft.fftn(psf, dim=(-2, -1))
     transfer_conj = transfer.conj()
     transfer_sq = transfer.abs().square()
-    residual = transfer_conj * torch.fft.fftn(y, dim=(-2, -1))
+    if factor > 1:
+        # Official upsample allocates contiguous NCHW even for channels-last z/y.
+        upsampled = torch.zeros(z.shape, dtype=z.dtype, device=z.device)
+        upsampled[..., ::factor, ::factor].copy_(y)
+    else:
+        upsampled = y
+    residual = transfer_conj * torch.fft.fftn(upsampled, dim=(-2, -1))
     residual = residual + torch.fft.fftn(rho * z, dim=(-2, -1))
-    inverse = transfer * residual / (transfer_sq + rho)
+    if factor == 1:
+        inverse = transfer * residual / (transfer_sq + rho)
+    else:
+
+        def alias_mean(value):
+            blocks = torch.stack(torch.chunk(value, factor, dim=2), dim=4)
+            blocks = torch.cat(torch.chunk(blocks, factor, dim=3), dim=4)
+            return blocks.mean(dim=-1)
+
+        inverse = alias_mean(transfer * residual) / (alias_mean(transfer_sq) + rho)
+        inverse = inverse.repeat(1, 1, factor, factor)
     solution = (residual - transfer_conj * inverse) / rho
     return torch.fft.ifftn(solution, dim=(-2, -1)).real
 
@@ -241,6 +264,21 @@ def main() -> None:
             physics = OfficialDiffPIRBlurFFT(
                 img_size=tuple(initial_state.shape[1:]),
                 filter=tensors["kernel"].to(device),
+                device=device,
+            )
+        elif task["name"] == "super_resolution":
+
+            class OfficialDiffPIRDownsampling(dinv.physics.Downsampling):
+                def prox_l2(self, z, y, gamma, **kwargs):
+                    return official_diffpir_deblur_prox(
+                        z, y, self.filter, gamma, factor=self.factor
+                    )
+
+            physics = OfficialDiffPIRDownsampling(
+                img_size=tuple(initial_state.shape[1:]),
+                filter=tensors["kernel"].to(device),
+                factor=task["factor"],
+                padding="circular",
                 device=device,
             )
         else:

@@ -26,6 +26,26 @@ class ZeroEpsilon(torch.nn.Module):
 
 
 class DiffPIRAlignmentTest(unittest.TestCase):
+    def test_sr_prox_solves_normal_equation(self):
+        # Non-symmetric odd kernel detects convolution direction and sampling phase.
+        generator = torch.Generator().manual_seed(4)
+        kernel = torch.rand(1, 1, 5, 5, generator=generator)
+        kernel /= kernel.sum()
+        physics = dinv.physics.Downsampling(
+            img_size=(1, 16, 16), factor=4, filter=kernel
+        )
+        z = torch.rand(1, 1, 16, 16, generator=generator)
+        y = torch.rand(1, 1, 4, 4, generator=generator)
+        rho = torch.tensor(0.3)
+        result = official_diffpir_deblur_prox(z, y, kernel, gamma=1 / rho, factor=4)
+        residual = physics.A_adjoint(physics.A(result) - y) + rho * (result - z)
+        self.assertLess(residual.abs().max().item(), 1e-6)
+        self.assertTrue(
+            torch.allclose(
+                (physics.A(z) * y).sum(), (z * physics.A_adjoint(y)).sum(), atol=1e-6
+            )
+        )
+
     def test_motion_kernel_uses_official_second_construction(self):
         class FakeKernel:
             def __init__(self, size, intensity):

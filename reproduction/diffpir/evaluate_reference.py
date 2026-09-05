@@ -58,7 +58,10 @@ def main() -> None:
         source = load_record(fixture, source_record, required=("ground_truth",))
         output = load_record(output_dir, records[case_id], required=("reconstruction",))
         metrics = image_metrics(
-            output["reconstruction"], source["ground_truth"], metric
+            output["reconstruction"],
+            source["ground_truth"],
+            metric,
+            crop_border=setting.get("metrics", {}).get("crop_border", 0),
         )
         cases.append({"id": case_id, **metrics})
         print(f"{setting['id']} {case_id}: {metrics}")
@@ -85,6 +88,12 @@ def main() -> None:
         ),
     }
     output_path = output_dir / "reference_metrics.json"
+    if "metrics" in setting:
+        report["metric_protocol"] = {
+            "psnr_ssim": "float32 RGB in [0,1], clipped, no uint8 round trip",
+            "crop_border": setting["metrics"]["crop_border"],
+            "lpips": "VGG, full image in [-1,1], clipped",
+        }
     if output_path.exists():
         raise FileExistsError(f"refusing to overwrite metrics: {output_path}")
     write_json(output_path, report)

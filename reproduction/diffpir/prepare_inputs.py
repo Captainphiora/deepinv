@@ -35,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fixture-id", default="ffhq256_inpainting_diffpir_quad20_v1")
     parser.add_argument("--images", required=True)
     parser.add_argument("--motionblur-repo")
+    parser.add_argument("--reference-repo")
     parser.add_argument("--limit", type=int, default=3)
     parser.add_argument("--artifact-root")
     parser.add_argument("--dry-run", action="store_true")
@@ -111,8 +112,46 @@ def main() -> None:
     height, width = task["image_size"][-2:]
     if height != width and task["name"] == "inpainting":
         raise ValueError("the official random-mask generator requires square images")
-    if task["name"] not in {"inpainting", "gaussian_deblur", "motion_deblur"}:
+    if task["name"] not in {
+        "inpainting",
+        "gaussian_deblur",
+        "motion_deblur",
+        "super_resolution",
+    }:
         raise ValueError(f"unsupported DiffPIR fixture task: {task['name']}")
+
+    sr_kernel = None
+    sr_dependency = None
+    if task["name"] == "super_resolution":
+        if not args.reference_repo:
+            raise ValueError("--reference-repo is required for SR")
+        from run_reference import verify_reference
+        from scipy.io import loadmat
+        import cv2
+
+        repo = Path(args.reference_repo).resolve()
+        revision = verify_reference(repo, setting["reference"]["commit"], task["name"])
+        kernel_file = repo / task["kernel_file"]
+        if file_sha256(kernel_file) != task["kernel_file_sha256"]:
+            raise ValueError("SR kernel file SHA256 does not match the setting")
+        factor = task["factor"]
+        if factor != 4 or height % factor or width % factor:
+            raise ValueError(
+                "this SR setting requires factor=4 and divisible image sizes"
+            )
+        sr_kernel = torch.from_numpy(
+            loadmat(kernel_file)["kernels"][0, factor - 2].copy()
+        ).float()[None, None]
+        sys.path.insert(0, str(repo))
+        from utils.utils_image import imresize_np
+
+        sr_dependency = {
+            "repository": str(repo),
+            "revision": revision,
+            "kernel_file": task["kernel_file"],
+            "kernel_file_sha256": task["kernel_file_sha256"],
+            "opencv": cv2.__version__,
+        }
 
     motionblur = None
     motion_kernel_type = None
@@ -194,7 +233,7 @@ def main() -> None:
     kernel = (
         official_gaussian_kernel(task["kernel_size"], task["kernel_std"])
         if task["name"] == "gaussian_deblur"
-        else None
+        else sr_kernel
     )
     cases = []
     for index, image_path in enumerate(images):
@@ -228,7 +267,13 @@ def main() -> None:
             )
             measurement = clean_measurement + measurement_noise
         else:
-            clean_measurement = official_circular_blur(image, kernel)
+            if task["name"] == "super_resolution":
+                resized = imresize_np(image.astype(np.float32) / 255, 1 / factor)
+                clean_measurement = (
+                    torch.from_numpy(resized.copy()).permute(2, 0, 1).unsqueeze(0)
+                )
+            else:
+                clean_measurement = official_circular_blur(image, kernel)
             noisy = clean_measurement.squeeze(0).permute(1, 2, 0).numpy().copy()
             noisy = noisy * 2 - 1
             noise_rng = np.random.RandomState(setting["randomness"]["measurement_seed"])
@@ -243,6 +288,16 @@ def main() -> None:
             setting["randomness"]["x_init_seed"] + index
         )
         initial_noise = torch.randn(clean_01.shape, generator=initial_generator)
+        initial_image = measurement
+        if task["name"] == "super_resolution":
+            upsampled = cv2.resize(
+                measurement.squeeze(0).permute(1, 2, 0).numpy(),
+                (width, height),
+                interpolation=cv2.INTER_CUBIC,
+            )
+            initial_image = (
+                torch.from_numpy(upsampled.copy()).permute(2, 0, 1).unsqueeze(0)
+            )
         if task["name"] in {"gaussian_deblur", "motion_deblur"}:
             t_y = torch.abs(noise_levels - 2 * task["noise_level"]).argmin()
             sqrt_alpha_effective = torch.sqrt(alpha_cumprod[-1]) / torch.sqrt(
@@ -258,7 +313,7 @@ def main() -> None:
             )
         else:
             initial_state = (
-                torch.sqrt(alpha_cumprod[-1]) * (2 * measurement - 1)
+                torch.sqrt(alpha_cumprod[-1]) * (2 * initial_image - 1)
                 + torch.sqrt(1 - alpha_cumprod[-1]) * initial_noise
             )
         transition_generator = torch.Generator().manual_seed(
@@ -281,6 +336,8 @@ def main() -> None:
             tensors.update({"effective_measurement": measurement * mask, "mask": mask})
         else:
             tensors["kernel"] = kernel
+        if task["name"] == "super_resolution":
+            tensors["initial_image"] = initial_image
         record = save_tensors(destination / "cases" / f"{case_id}.pt", tensors)
         record.update(
             {
@@ -319,6 +376,8 @@ def main() -> None:
     }
     if motionblur is not None:
         manifest["dependencies"] = {"motionblur": motionblur}
+    if sr_dependency is not None:
+        manifest["dependencies"] = {"official_sr": sr_dependency}
     write_json(destination / "manifest.json", manifest)
     print(destination / "manifest.json")
 

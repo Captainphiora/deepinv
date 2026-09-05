@@ -31,9 +31,7 @@ class HarnessTest(unittest.TestCase):
     def test_tensor_artifact_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "artifact.pt"
-            artifact = {
-                "value": torch.arange(6, dtype=torch.float32).reshape(2, 3)
-            }
+            artifact = {"value": torch.arange(6, dtype=torch.float32).reshape(2, 3)}
             record = save_tensors(path, artifact)
 
             loaded = load_tensors(path, required=("value",))
@@ -61,6 +59,17 @@ class HarnessTest(unittest.TestCase):
         self.assertAlmostEqual(metrics["ssim"], 1.0)
         self.assertIs(type(metrics["psnr_db"]), float)
         self.assertIs(type(metrics["ssim"]), float)
+
+    def test_metric_crop_excludes_only_psnr_ssim_border(self):
+        target = torch.zeros(1, 3, 24, 24)
+        result = torch.full_like(target, 0.1)
+        result[..., :4, :] = 1
+        cropped = image_metrics(result, target, crop_border=4)
+        expected = image_metrics(result[..., 4:-4, 4:-4], target[..., 4:-4, 4:-4])
+        self.assertEqual(cropped, expected)
+        self.assertGreater(cropped["psnr_db"], image_metrics(result, target)["psnr_db"])
+        with self.assertRaises(ValueError):
+            image_metrics(result, target, crop_border=12)
 
     def test_run_manifest_pins_fixture_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -112,14 +121,10 @@ class HarnessTest(unittest.TestCase):
             "device": "cuda:3",
             "gpu": {**first["gpu"], "uuid": "gpu-3"},
         }
-        self.assertEqual(
-            alignment_environment(first), alignment_environment(second)
-        )
+        self.assertEqual(alignment_environment(first), alignment_environment(second))
 
         second["gpu"]["name"] = "different-model"
-        self.assertNotEqual(
-            alignment_environment(first), alignment_environment(second)
-        )
+        self.assertNotEqual(alignment_environment(first), alignment_environment(second))
 
 
 if __name__ == "__main__":

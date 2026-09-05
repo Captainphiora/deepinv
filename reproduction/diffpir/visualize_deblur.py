@@ -1,4 +1,4 @@
-"""Visualize fixed deblur tensor artifacts using metrics from comparison.json."""
+"""Visualize fixed deblur/SR tensor artifacts using comparison.json metrics."""
 
 from __future__ import annotations
 
@@ -61,6 +61,8 @@ def main() -> None:
     task_name = fixture_manifest.get("task", "deblur")
     display_name = task_name.replace("_", " ").title()
     kernel_name = "Motion kernel" if task_name == "motion_deblur" else "Gaussian kernel"
+    if task_name == "super_resolution":
+        kernel_name = "Bicubic solver kernel"
 
     figure, axes = plt.subplots(
         len(cases), 5, squeeze=False, figsize=(16, 3.4 * len(cases))
@@ -86,7 +88,11 @@ def main() -> None:
                 False,
             ),
             (source["measurement"], "Noisy measurement", True),
-            (kernel, f"61×61 {kernel_name}\n(normalized display)", True),
+            (
+                kernel,
+                f"{kernel.shape[-2]}×{kernel.shape[-1]} {kernel_name}\n(normalized display)",
+                True,
+            ),
             (
                 official,
                 metric_title("Original repo", metrics[case_id]["reference"]),
@@ -106,7 +112,8 @@ def main() -> None:
 
     mean = comparison["mean"]
     figure.suptitle(
-        f"{display_name} | {run_manifest['setting_id']} | {run_manifest['run_id']}"
+        f"{display_name} | {run_manifest['setting_id']} | {run_manifest['run_id']}\n"
+        f"PSNR/SSIM crop border={comparison.get('metric_protocol', {}).get('crop_border', 0)} | LPIPS full image"
     )
     figure.text(
         0.5,
